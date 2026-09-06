@@ -5,7 +5,7 @@ import { z } from 'zod';
 import { Shufersal } from './shufersal.js';
 
 const shopping = new Shufersal();
-const server = new McpServer({ name: 'itamux-shufersal', version: '0.4.0' });
+const server = new McpServer({ name: 'itamux-shufersal', version: '0.4.1' });
 function tool(name, description, inputSchema, call) {
   server.registerTool(name, { description, inputSchema }, async args => {
     try {

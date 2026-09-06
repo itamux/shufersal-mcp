@@ -1,5 +1,7 @@
 // Functions evaluated in Chromium use only their arguments and browser APIs.
 export function parseCart(html) {
+  const imageUrl = values => values.find(v => typeof v === 'string'
+    && /^https:\/\/(?:res\.cloudinary\.com\/shufersal\/image\/upload\/|media\.shufersal\.co\.il\/product_images\/)[^\s?#]+$/.test(v) && !v.includes('/default/')) || null;
   const doc = new DOMParser().parseFromString(html, 'text/html');
   const nodes = [...doc.querySelectorAll('.miglog-prod[data-entry-number][data-product-code]')];
   const seen = new Set();
@@ -13,7 +15,9 @@ export function parseCart(html) {
     const sellingMethod = node.querySelector('[name="sellingMethod"]')?.value || node.getAttribute('data-selling-method');
     if (!Number.isFinite(quantity) || quantity <= 0 || !Number.isInteger(entryNumber) || entryNumber < 0 || !sellingMethod) throw Error('Cart item format changed');
     return {
-      productCode: node.getAttribute('data-product-code'), entryNumber, quantity, sellingMethod,
+      productCode: node.getAttribute('data-product-code'),
+      imageUrl: imageUrl([...node.querySelectorAll('.imgContainer img')].flatMap(i => [i.getAttribute('data-src'), i.getAttribute('src')])),
+      entryNumber, quantity, sellingMethod,
       name: node.getAttribute('data-product-name') || node.querySelector('.miglog-prod-name')?.textContent?.trim() || '',
       price: node.getAttribute('data-product-price') || node.querySelector('.miglog-prod-price')?.textContent?.trim() || null,
     };
@@ -53,6 +57,8 @@ export function verifyCart(cart, code, method, expected) {
 
 // Project inside Chromium: account/contact/payment fields never cross MCP.
 export async function readOrders({ orderNumber, limit = 20, offset = 0 } = {}) {
+  const imageUrl = values => values.find(v => typeof v === 'string'
+    && /^https:\/\/(?:res\.cloudinary\.com\/shufersal\/image\/upload\/|media\.shufersal\.co\.il\/product_images\/)[^\s?#]+$/.test(v) && !v.includes('/default/')) || null;
   const scalar = value => ['string', 'number', 'boolean'].includes(typeof value) ? value : null;
   const price = value => value && typeof value === 'object' ? { value: scalar(value.value), currency: scalar(value.currencyIso), formatted: scalar(value.formattedValue) } : null;
   const summary = o => ({ orderNumber: o.code, created: scalar(o.created), date: scalar(o.createdString),
@@ -78,7 +84,9 @@ export async function readOrders({ orderNumber, limit = 20, offset = 0 } = {}) {
   if (order.code !== orderNumber || !Array.isArray(order.entries)) throw Error('Order details unavailable');
   if (!order.entries.every(e => e.product && typeof e.product.code === 'string' && typeof e.quantity === 'number')) throw Error('Order item format changed');
   return { ...summary(order), items: order.entries.map(e => ({
-    productCode: e.product.code, name: scalar(e.product.name), quantity: scalar(e.frontQuantity ?? e.quantity),
+    productCode: e.product.code,
+    imageUrl: imageUrl([e.product.baseProductImageMedium, ...(Array.isArray(e.product.images) ? e.product.images.filter(i => i.format === 'product').map(i => i.url) : []), e.product.baseProductImageLarge, e.product.baseProductImageSmall]),
+    name: scalar(e.product.name), quantity: scalar(e.frontQuantity ?? e.quantity),
     sellingMethod: scalar(e.customerSellingMethod?.code || e.product.sellingMethod?.code),
     unitDescription: scalar(e.product.unitDescription), unitPrice: price(e.basePrice), total: price(e.totalPrice),
     outOfStock: e.outOfStock === true,
