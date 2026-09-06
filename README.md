@@ -121,3 +121,12 @@ Requires gateway plugin v0.4.0, which admits only the fixed activation endpoint,
 a bounded JSON coupon-code body, CSRF and authenticated session, and the
 `Bearer PH_shufersal_coupon` dispatch marker. The coupon code stays internal and
 is redacted at the gateway; MCP returns the public promotion code and verified state.
+
+## Product images (0.4.1)
+
+Product rows from search, category browsing, promotion products, cart reads and
+order details include `imageUrl`: a public HTTPS Shufersal product image URL,
+or `null` when unavailable. Catalog and order data prefer the medium product
+image; HTML product rows use the image supplied by the site. Default placeholder
+images are omitted. URLs are returned without downloading image files or changing
+the browser's Claw Patrol network permissions.

@@ -42,6 +42,8 @@ export function catalogQuery({ query = '', category_code, brand_codes = [], filt
 }
 
 export async function readCatalog(request) {
+  const imageUrl = values => values.find(v => typeof v === 'string'
+    && /^https:\/\/(?:res\.cloudinary\.com\/shufersal\/image\/upload\/|media\.shufersal\.co\.il\/product_images\/)[^\s?#]+$/.test(v) && !v.includes('/default/')) || null;
   const { q, page, limit, food, refinements, metadataPath } = request;
   const baseQuery = q.split(':').slice(0, 2).join(':');
   const params = new URLSearchParams({ q, page: String(page), limit: String(limit) });
@@ -75,7 +77,9 @@ export async function readCatalog(request) {
   if (!Array.isArray(data.results) || !p || !Number.isInteger(p.currentPage) || !Number.isInteger(p.totalNumberOfResults)) throw Error('Product search format changed');
   if (p.currentPage !== page || p.pageSize !== limit || p.sort !== q.split(':')[1]) throw Error('Requested paging or sort was not honored');
   return { products: data.results.slice(0, limit).map(item => ({
-    code: item.code, name: item.name, price: item.price, pricePerUnit: item.pricePerUnit,
+    code: item.code, name: item.name,
+    imageUrl: imageUrl([item.baseProductImageMedium, ...(Array.isArray(item.images) ? item.images.filter(i => i.format === 'product').map(i => i.url) : []), item.baseProductImageLarge, item.baseProductImageSmall]),
+    price: item.price, pricePerUnit: item.pricePerUnit,
     sellingMethod: item.sellingMethod, unitDescription: item.unitDescription, brandName: item.brandName,
     promotionCode: item.mainPromotionCode || null, promotionDescription: item.promotionCharacteristicDescription || null,
   })), pagination: { page: p.currentPage, pageSize: p.pageSize, totalPages: p.numberOfPages,
@@ -130,6 +134,8 @@ export async function readSales({ category_code = 'A', page = 0 } = {}) {
 }
 
 export async function readPromotionProducts({ promotion_code } = {}) {
+  const imageUrl = values => values.find(v => typeof v === 'string'
+    && /^https:\/\/(?:res\.cloudinary\.com\/shufersal\/image\/upload\/|media\.shufersal\.co\.il\/product_images\/)[^\s?#]+$/.test(v) && !v.includes('/default/')) || null;
   if (!/^[A-Za-z0-9_-]{1,80}$/.test(promotion_code || '')) throw Error('Invalid promotion code');
   const r = await fetch('/online/he/promotionPopup/' + promotion_code, {
     credentials: 'same-origin', redirect: 'error', signal: AbortSignal.timeout(20000),
@@ -142,7 +148,9 @@ export async function readPromotionProducts({ promotion_code } = {}) {
     if (!/^[A-Za-z0-9_-]{1,80}$/.test(code || '') || seen.has(code)) return [];
     seen.add(code);
     const text = selector => n.querySelector(selector)?.textContent.replace(/\s+/g, ' ').trim() || null;
-    return [{ code, name: text('.product .description'), package: text('.product .brand-name'),
+    return [{ code,
+      imageUrl: imageUrl([...n.querySelectorAll('.imgContainer img')].flatMap(i => [i.getAttribute('data-src'), i.getAttribute('src')])),
+      name: text('.product .description'), package: text('.product .brand-name'),
       sellingMethod: n.getAttribute('data-selling-method'), regularPrice: text('[data-price-per-unit]'),
       unitPrice: text('.pricePerUnit .small') }];
   });
