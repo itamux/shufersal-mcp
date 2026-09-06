@@ -5,7 +5,7 @@ import { z } from 'zod';
 import { Shufersal } from './shufersal.js';
 
 const shopping = new Shufersal();
-const server = new McpServer({ name: 'itamux-shufersal', version: '0.3.0' });
+const server = new McpServer({ name: 'itamux-shufersal', version: '0.4.0' });
 function tool(name, description, inputSchema, call) {
   server.registerTool(name, { description, inputSchema }, async args => {
     try {
@@ -14,7 +14,7 @@ function tool(name, description, inputSchema, call) {
       // Browser/network errors may contain credentials, request bodies or
       // session-bearing URLs. Never return those through MCP or console logs.
       return { isError: true, content: [{ type: 'text', text:
-        `${name} failed. Check connection and Claw Patrol configuration. For login, credentials or a verification challenge may need attention. After a cart failure, read the cart before retrying: the change may already have happened. Do not retry writes automatically.` }] };
+        `${name} failed. Check connection and Claw Patrol configuration. For login, credentials or a verification challenge may need attention. After a coupon activation failure, read coupon state before retrying. After a cart failure, read the cart before retrying: the change may already have happened. Do not retry writes automatically.` }] };
     }
   });
 }
@@ -36,6 +36,7 @@ tool('browse_shufersal_category', 'Browse products in a category or subcategory 
 tool('get_shufersal_sales', 'List current sale offers, including multi-buy terms. Use promotionCode with get_shufersal_promotion_products for eligible products and regular prices. Does not activate coupons.', { category_code: code.default('A'), page: z.number().int().min(0).max(1000).default(0) }, args => shopping.sales(args));
 tool('get_shufersal_promotion_products', 'List products eligible for one sale offer or personal coupon promotionCode. Prices are regular item prices; read offer terms for discounts and required quantities.', { promotion_code: code }, args => shopping.promotionProducts(args));
 tool('get_shufersal_personal_coupons', 'Read this authenticated account’s unexpired personal coupons and activation status. Excludes prepaid cards and redemption codes. Does not activate or redeem coupons.', { limit: z.number().int().min(1).max(100).default(20), offset: z.number().int().min(0).max(10000).default(0), activated: z.boolean().optional(), expiring_only: z.boolean().default(false) }, args => shopping.coupons(args));
+tool('activate_shufersal_coupon', 'Activate one unexpired account coupon selected by promotion_code from personal coupons. Already-active coupons are a no-op. Confirms activation with a fresh account read. Does not redeem or buy anything. After failure read coupon state before retrying; no automatic retries.', { promotion_code: code }, args => shopping.activateCoupon(args));
 const product = {
   product_code: z.string().regex(/^[A-Za-z0-9_-]{1,80}$/).describe('Exact product code from search or cart'),
   selling_method: z.enum(['BY_UNIT', 'BY_WEIGHT']).describe('Selling method code from search or cart'),

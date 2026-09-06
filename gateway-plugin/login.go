@@ -46,6 +46,9 @@ func transformLogin(ctx context.Context, req pluginsdk.HTTPTransformRequest) (*p
 	// A singleton credential can be selected for public page/resource reads too.
 	// Those must pass without injecting secrets; other writes still fail closed.
 	target, parseErr := url.Parse(req.URL)
+	if parseErr == nil && req.Method == http.MethodPost && target.Path == couponPath {
+		return transformCoupon(req, target)
+	}
 	if parseErr == nil && req.Method == http.MethodPost && strings.HasPrefix(target.Path, "/online/he/cart/") {
 		return transformCart(req, target)
 	}
