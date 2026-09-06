@@ -1,6 +1,6 @@
 {
   "name": "@itamux/shufersal-mcp",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "type": "module",
   "scripts": {
     "start": "node server.js",
@@ -21,7 +21,8 @@
   "files": [
     "server.js",
     "shufersal.js",
-    "shopping.js"
+    "shopping.js",
+    "catalog.js"
   ],
   "engines": {
     "node": ">=22.12"

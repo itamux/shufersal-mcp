@@ -1,4 +1,5 @@
 import puppeteer from 'puppeteer';
+import { catalogQuery, readCatalog, readCategories, readCoupons, readSales, readPromotionProducts } from './catalog.js';
 import { parseCart, cartWrite, verifyCart, readOrders } from './shopping.js';
 
 export const ORIGIN = 'https://www.shufersal.co.il';
@@ -139,29 +140,25 @@ export class Shufersal {
     });
   }
 
-  search(query) {
-    return this.run(async () => {
-      const page = await this.navigate(HOME);
-      const result = await page.evaluate(async query => {
-        const url = new URL('/online/he/search/results', location.origin);
-        url.searchParams.set('q', query);
-        url.searchParams.set('limit', '15');
-        const response = await fetch(url, {
-          headers: { accept: 'application/json', 'x-requested-with': 'XMLHttpRequest' },
-          credentials: 'same-origin', signal: AbortSignal.timeout(20000),
-        });
-        if (!response.ok) return { error: true };
-        const data = await response.json();
-        if (!Array.isArray(data.results)) return { error: true };
-        return { products: data.results.slice(0, 15).map(item => ({
-          code: item.code, name: item.name, price: item.price,
-          sellingMethod: item.sellingMethod, unitDescription: item.unitDescription,
-          brandName: item.brandName,
-        })) };
-      }, query);
-      if (result.error) throw new Error('Product search failed; results are unavailable.');
-      return result;
-    });
+  search(args) {
+    const request = catalogQuery(typeof args === 'string' ? { query: args } : args);
+    return this.run(async () => (await this.navigate(HOME)).evaluate(readCatalog, request));
+  }
+
+  categories(args) {
+    return this.run(async () => (await this.navigate(HOME)).evaluate(readCategories, args));
+  }
+
+  sales(args) {
+    return this.run(async () => (await this.navigate(HOME)).evaluate(readSales, args));
+  }
+
+  promotionProducts(args) {
+    return this.run(async () => (await this.navigate(HOME)).evaluate(readPromotionProducts, args));
+  }
+
+  coupons(args) {
+    return this.run(async () => (await this.accountPage()).evaluate(readCoupons, args));
   }
 
   async accountPage() {
