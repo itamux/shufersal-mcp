@@ -100,9 +100,24 @@ and ignored pagination/sorting fail instead of returning misleading results.
   `limit` (1–100), `offset`, optional `activated`, and `expiring_only`.
   Includes expiry and activation status, excluding prepaid cards and unique
   redemption codes. Unexpired does not guarantee remaining uses or eligibility;
-  the site decides whether the offer applies. This tool never activates coupons.
+  the site decides whether the offer applies. Use the separate activation tool to activate a selected coupon.
 
-These are read-only GET operations through the existing gateway. Sale and
+The catalog and coupon-list tools are read-only GET operations through the existing gateway. Sale and
 coupon promotion codes can be used to browse eligible products. Availability
 and final discounts depend on the account, selected store and cart conditions.
 No guessed price-range or discount-percent filter is exposed.
+
+
+## Activate a personal coupon (0.4)
+
+`activate_shufersal_coupon` takes `promotion_code` from the account coupon list.
+It requires exactly one unexpired non-prepaid account coupon, skips already-active
+coupons, and verifies `activated: true` with a fresh account read after one POST.
+An ambiguous or missing match is rejected. After a failure, read coupon status
+before retrying: the activation may already have happened. There are no automatic
+retries, redemption, purchases, or bulk activation.
+
+Requires gateway plugin v0.4.0, which admits only the fixed activation endpoint,
+a bounded JSON coupon-code body, CSRF and authenticated session, and the
+`Bearer PH_shufersal_coupon` dispatch marker. The coupon code stays internal and
+is redacted at the gateway; MCP returns the public promotion code and verified state.

@@ -1,4 +1,5 @@
 import puppeteer from 'puppeteer';
+import { prepareCoupon, activateCouponAndVerify } from './coupons.js';
 import { catalogQuery, readCatalog, readCategories, readCoupons, readSales, readPromotionProducts } from './catalog.js';
 import { parseCart, cartWrite, verifyCart, readOrders } from './shopping.js';
 
@@ -9,6 +10,8 @@ export const LOGIN_POST = `${ORIGIN}/online/he/j_spring_security_check`;
 export const EMAIL = 'PH_shufersal_email';
 export const PASSWORD = 'PH_shufersal_password';
 export const AUTHORIZATION = 'Bearer PH_shufersal_login';
+export const COUPON_POST = `${ORIGIN}/online/he/my-account/coupons/activate-coupon`;
+export const COUPON_AUTHORIZATION = 'Bearer PH_shufersal_coupon';
 export const CART_AUTHORIZATION = 'Bearer PH_shufersal_cart';
 
 // Only public placeholders belong in the consumer process. Values are filled
@@ -20,13 +23,14 @@ export function loginPlaceholders(env) {
   return { email: EMAIL, password: PASSWORD };
 }
 
-export function allowedRequest(url, method, loginPending, body = '', cartPending = null) {
+export function allowedRequest(url, method, loginPending, body = '', cartPending = null, couponPending = null) {
   const target = new URL(url);
   if (target.origin !== ORIGIN || target.username || target.password) return false;
   if (method === 'GET' || method === 'HEAD') {
     return !/logout|checkout/i.test(target.pathname)
       && (!target.pathname.includes('/cart/') || (target.pathname === '/online/he/cart/load' && !target.search));
   }
+  if (method === 'POST' && couponPending && url === COUPON_POST && body === couponPending.body) return true;
   if (method === 'POST' && cartPending && url === cartPending.url && body === cartPending.body
     && ['/online/he/cart/add', '/online/he/cart/update'].includes(target.pathname)) return true;
   if (method !== 'POST' || url !== LOGIN_POST || !loginPending) return false;
@@ -62,7 +66,7 @@ export class Shufersal {
         const method = request.method();
         const headers = { ...request.headers() };
         delete headers.authorization;
-        if (!allowedRequest(url, method, this.loginPending, request.postData(), this.cartPending)) {
+        if (!allowedRequest(url, method, this.loginPending, request.postData(), this.cartPending, this.couponPending)) {
           void request.abort().catch(() => {});
           return;
         }
@@ -71,6 +75,8 @@ export class Shufersal {
           // a global browser header or a header carried across redirects.
           if (url === LOGIN_POST) {
             headers.authorization = AUTHORIZATION; this.loginPending = false;
+          } else if (url === COUPON_POST) {
+            headers.authorization = COUPON_AUTHORIZATION; this.couponPending = null;
           } else {
             headers.authorization = CART_AUTHORIZATION; this.cartPending = null;
           }
@@ -159,6 +165,20 @@ export class Shufersal {
 
   coupons(args) {
     return this.run(async () => (await this.accountPage()).evaluate(readCoupons, args));
+  }
+
+  activateCoupon(args) {
+    return this.run(async () => {
+      const page = await this.accountPage();
+      const prepared = await page.evaluate(prepareCoupon, args);
+      if (prepared.alreadyActivated) return { promotionCode: args.promotion_code, activated: true, verified: true, alreadyActivated: true };
+      const csrf = await page.evaluate(() => window.ACC?.config?.CSRFToken);
+      if (typeof csrf !== 'string' || !csrf) throw Error('Coupon CSRF unavailable');
+      this.couponPending = { body: prepared.body };
+      try {
+        return await page.evaluate(activateCouponAndVerify, { ...args, body: prepared.body, csrf });
+      } finally { this.couponPending = null; }
+    });
   }
 
   async accountPage() {
