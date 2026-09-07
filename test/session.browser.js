@@ -1,7 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import puppeteer from 'puppeteer';
-import {Shufersal,AuthenticationError,LOGIN,LOGIN_POST,EMAIL,PASSWORD} from '../shufersal.js';
+import {Shufersal,AuthenticationError,LOGIN,LOGIN_POST} from '../shufersal.js';
+const EMAIL = 'fixture@example.invalid';
+const PASSWORD = 'fixture-password&=with spaces';
 
 for(const scenario of ['recover','rejected','already-authenticated','write-failure','restore-existing']) {
   test(`automatic session: ${scenario}`,async()=>{

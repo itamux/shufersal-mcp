@@ -13,6 +13,6 @@ test('stdio discovery works and missing login configuration fails without leakin
     assert.deepEqual(tools.find(t => t.name === 'login_shufersal').inputSchema.properties, {});
     const result = await client.callTool({ name: 'login_shufersal', arguments: {} });
     assert.equal(result.isError, true);
-    assert.match(result.content[0].text, /Claw Patrol/);
+    assert.match(result.content[0].text, /configuration|Login refresh failed/);
   } finally { await client.close(); }
 });

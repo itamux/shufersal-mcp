@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import puppeteer from 'puppeteer';
-import { Shufersal, CART_AUTHORIZATION } from '../shufersal.js';
+import { Shufersal } from '../shufersal.js';
 
 for (const outcome of ['success', 'rejected-write', 'stale-cart', 'editing-order', 'expired-session', 'out-of-stock', 'calculation-error', 'zero-count']) {
   test(`headless cart: ${outcome}`, async () => {
@@ -39,7 +39,7 @@ for (const outcome of ['success', 'rejected-write', 'stale-cart', 'editing-order
       assert.equal((await s.changeCart('update',{...args,quantity:2,expected_quantity:1})).quantity,2);
       assert.equal((await s.changeCart('remove',{...args,expected_quantity:2})).cart.items.length,0);
       assert.equal(posts.length,3);
-      assert.ok(posts.every(p=>p.headers.authorization===CART_AUTHORIZATION));
+      assert.ok(posts.every(p=>p.headers.authorization===undefined));
     }finally{await s.close();}
   });
 }

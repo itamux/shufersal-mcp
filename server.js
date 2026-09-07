@@ -5,7 +5,7 @@ import { z } from 'zod';
 import { Shufersal, AuthenticationError } from './shufersal.js';
 
 const shopping = new Shufersal();
-const server = new McpServer({ name: 'itamux-shufersal', version: '0.4.6' });
+const server = new McpServer({ name: 'itamux-shufersal', version: '0.5.0' });
 function tool(name, description, inputSchema, call) {
   server.registerTool(name, { description: description + (!['open_shufersal', 'login_shufersal'].includes(name) ? ' The server refreshes a logged-out session once before starting this operation. Failed writes are never replayed automatically.' : ''), inputSchema }, async args => {
     try {
@@ -15,12 +15,12 @@ function tool(name, description, inputSchema, call) {
       // Browser/network errors may contain credentials, request bodies or
       // session-bearing URLs. Never return those through MCP or console logs.
       return { isError: true, content: [{ type: 'text', text:
-        `${name} failed. Check connection and Claw Patrol configuration. For login, credentials or a verification challenge may need attention. After a coupon activation failure, read coupon state before retrying. After a cart failure, read the cart before retrying: the change may already have happened. Do not retry writes automatically.` }] };
+        `${name} failed. Check the connection and browser configuration. For login, credentials or a verification challenge may need attention. After a coupon activation failure, read coupon state before retrying. After a cart failure, read the cart before retrying: the change may already have happened. Do not retry writes automatically.` }] };
     }
   });
 }
 tool('open_shufersal', 'Open Shufersal headlessly and report whether the current session is authenticated.', {}, () => shopping.open());
-tool('login_shufersal', 'Log in once using configured Claw Patrol email/password placeholders. No credentials are accepted as tool arguments. Reuse an authenticated session; do not retry failures automatically.', {}, () => shopping.login());
+tool('login_shufersal', 'Log in once using SHUFERSAL_EMAIL and SHUFERSAL_PASSWORD environment variables. No credentials are accepted as tool arguments. Reuse an authenticated session; do not retry failures automatically.', {}, () => shopping.login());
 const code = z.string().regex(/^[A-Za-z0-9_-]{1,80}$/);
 const catalog = {
   category_code: code.optional(),

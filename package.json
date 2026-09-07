@@ -1,6 +1,6 @@
 {
   "name": "@itamux/shufersal-mcp",
-  "version": "0.4.6",
+  "version": "0.5.0",
   "type": "module",
   "scripts": {
     "start": "node server.js",
@@ -12,7 +12,7 @@
     "puppeteer": "25.10.0",
     "zod": "4.5.4"
   },
-  "description": "Headless Shufersal shopping with Claw Patrol credential custody",
+  "description": "Standalone headless Shufersal shopping MCP server",
   "license": "MIT",
   "author": "Mati Horowitz and itamux contributors",
   "bin": {
