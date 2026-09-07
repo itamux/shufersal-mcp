@@ -78,6 +78,9 @@ export async function readCatalog(request) {
   if (p.currentPage !== page || p.pageSize !== limit || p.sort !== q.split(':')[1]) throw Error('Requested paging or sort was not honored');
   return { products: data.results.slice(0, limit).map(item => ({
     code: item.code, name: item.name,
+    stockStatus: typeof item.stock?.stockLevelStatus?.code === 'string' ? item.stock.stockLevelStatus.code : null,
+    availability: item.stock?.stockLevelStatus?.code === 'inStock' ? 'in_stock'
+      : item.stock?.stockLevelStatus?.code === 'outOfStock' ? 'out_of_stock' : 'unknown',
     imageUrl: imageUrl([item.baseProductImageMedium, ...(Array.isArray(item.images) ? item.images.filter(i => i.format === 'product').map(i => i.url) : []), item.baseProductImageLarge, item.baseProductImageSmall]),
     price: item.price, pricePerUnit: item.pricePerUnit,
     sellingMethod: item.sellingMethod, unitDescription: item.unitDescription, brandName: item.brandName,
@@ -148,7 +151,11 @@ export async function readPromotionProducts({ promotion_code } = {}) {
     if (!/^[A-Za-z0-9_-]{1,80}$/.test(code || '') || seen.has(code)) return [];
     seen.add(code);
     const text = selector => n.querySelector(selector)?.textContent.replace(/\s+/g, ' ').trim() || null;
+    const inStock = !!n.querySelector('.miglog-prod-inStock');
+    const outOfStock = [...n.querySelectorAll('.js-miglog-outofstock')].some(marker => !marker.closest('.hidden, [hidden]'));
+    const stockStatus = inStock === outOfStock ? null : inStock ? 'inStock' : 'outOfStock';
     return [{ code,
+      stockStatus, availability: stockStatus === 'inStock' ? 'in_stock' : stockStatus === 'outOfStock' ? 'out_of_stock' : 'unknown',
       imageUrl: imageUrl([...n.querySelectorAll('.imgContainer img')].flatMap(i => [i.getAttribute('data-src'), i.getAttribute('src')])),
       name: text('.product .description'), package: text('.product .brand-name'),
       sellingMethod: n.getAttribute('data-selling-method'), regularPrice: text('[data-price-per-unit]'),
