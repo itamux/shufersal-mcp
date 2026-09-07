@@ -23,3 +23,8 @@ test('a failed operation does not strand subsequent work', async () => {
   const b = s.run(async () => { order.push('second'); return 2; });
   await assert.rejects(a); assert.equal(await b, 2); assert.deepEqual(order, ['first', 'second']);
 });
+
+test('native cart restore is admitted without transaction or merge parameters',()=>{
+  assert.equal(allowedRequest(HOME+'cart/load?restoreCart=true','GET'),true);
+  for(const path of ['cart/load?restoreCart=false','cart/load?restoreCart=true&executeTransaction=true','cart/load?restoreCart=true&restoreCart=true','cart/merge?toMerge=true','cart/transaction-load','cart/hard-load']) assert.equal(allowedRequest(HOME+path,'GET'),false);
+});

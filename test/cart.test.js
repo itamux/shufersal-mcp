@@ -21,7 +21,7 @@ test('a cart write is admitted only with its exact armed body and URL', () => {
   const w=cartWrite('add',args,cart);const pending={url:HOME+'cart/add',body:w.body};
   assert.equal(allowedRequest(pending.url,'POST',false,w.body,pending),true);
   assert.equal(allowedRequest(pending.url,'POST',false,w.body+' ',pending),false);
-  for(const suffix of ['checkout','cart/remove','cart/cartFromOrder/123','cart/load?restoreCart=true'])
+  for(const suffix of ['checkout','cart/remove','cart/cartFromOrder/123','cart/load?executeTransaction=true'])
     assert.equal(allowedRequest(HOME+suffix,'GET',false),false);
   assert.equal(allowedRequest(HOME+'cart/add','POST',false,w.body),false);
 });

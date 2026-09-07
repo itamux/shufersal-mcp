@@ -51,10 +51,10 @@ func TestCartRejectsUnsafeRequests(t *testing.T) {
 			r.Headers.Del("Authorization")
 			r.URL = homeURL + "cart/cartFromOrder/123"
 		},
-		"cart restore GET": func(r *pluginsdk.HTTPTransformRequest) {
+		"cart transaction GET": func(r *pluginsdk.HTTPTransformRequest) {
 			r.Method = "GET"
 			r.Headers.Del("Authorization")
-			r.URL = homeURL + "cart/load?restoreCart=true"
+			r.URL = homeURL + "cart/load?executeTransaction=true"
 		},
 		"external":     func(r *pluginsdk.HTTPTransformRequest) { r.URL = "https://evil.invalid/online/he/cart/add" },
 		"login marker": func(r *pluginsdk.HTTPTransformRequest) { r.Headers.Set("Authorization", marker) },
@@ -82,5 +82,22 @@ func TestCartRejectsUnsafeRequests(t *testing.T) {
 				t.Fatal("unsafe request accepted")
 			}
 		})
+	}
+}
+
+func TestNativeCartRestoreOnly(t *testing.T) {
+	for _, query := range []string{"restoreCart=true", "restoreCart=false", "restoreCart=true&executeTransaction=true", "restoreCart=true&restoreCart=true", "restoreCart=true&toMerge=true"} {
+		r := cartFixture(t)
+		r.Method = "GET"
+		r.Headers.Del("Authorization")
+		r.URL = homeURL + "cart/load?" + query
+		out, err := transformLogin(context.Background(), r)
+		if query == "restoreCart=true" {
+			if err != nil || len(out.Redactions) != 1 {
+				t.Fatal("native restore missing session custody", err)
+			}
+		} else if err == nil {
+			t.Fatal("unexpected restore query admitted", query)
+		}
 	}
 }

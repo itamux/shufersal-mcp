@@ -28,7 +28,7 @@ export function allowedRequest(url, method, loginPending, body = '', cartPending
   if (target.origin !== ORIGIN || target.username || target.password) return false;
   if (method === 'GET' || method === 'HEAD') {
     return !/logout|checkout/i.test(target.pathname)
-      && (!target.pathname.includes('/cart/') || (target.pathname === '/online/he/cart/load' && !target.search));
+      && (!target.pathname.includes('/cart/') || (target.pathname === '/online/he/cart/load' && (!target.search || (method === 'GET' && target.search === '?restoreCart=true'))));
   }
   if (method === 'POST' && couponPending && url === COUPON_POST && body === couponPending.body) return true;
   if (method === 'POST' && cartPending && url === cartPending.url && body === cartPending.body
@@ -200,17 +200,20 @@ export class Shufersal {
   }
 
   async accountPage() {
-    const page = await this.navigate(HOME);
-    if (await this.authenticated(page)) return page;
-    return this.refreshSession();
+    let page = await this.navigate(HOME);
+    if (!await this.authenticated(page)) page = await this.refreshSession();
+    if (await page.evaluate(() => !!window.miglog?.showMergeCarts)) throw Error('Cart merge decision required; no shopping operation started');
+    // Match native page initialization: login alone can expose an empty session cart.
+    await this.readCart(page, true);
+    return page;
   }
 
-  async readCart(page) {
-    const html = await page.evaluate(async () => {
-      const r = await fetch('/online/he/cart/load', { credentials: 'same-origin', redirect: 'error', signal: AbortSignal.timeout(20000) });
+  async readCart(page, restore = false) {
+    const html = await page.evaluate(async restore => {
+      const r = await fetch('/online/he/cart/load' + (restore ? '?restoreCart=true' : ''), { credentials: 'same-origin', redirect: 'error', signal: AbortSignal.timeout(20000) });
       if (!r.ok) throw Error('Cart unavailable');
       return r.text();
-    });
+    }, restore);
     return page.evaluate(parseCart, html);
   }
 

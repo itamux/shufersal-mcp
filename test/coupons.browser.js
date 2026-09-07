@@ -8,6 +8,7 @@ for(const outcome of ['success','already-active','rejected','expired','ambiguous
   const launch=async options=>{const b=await puppeteer.launch(options);const orig=b.newPage.bind(b);b.newPage=async()=>{const p=await orig();p.on('request',r=>{r.continue=async({headers})=>{
    let body,contentType='text/html';const u=new URL(r.url());
    if(r.method()==='POST'){posts.push({body:r.postData(),headers});if(outcome!=='rejected') activated=true;body='{"activated":true}';contentType='application/json';}
+   else if(u.pathname.endsWith('/cart/load')) body='<span id="cartTotalItems">0</span>';
    else if(u.pathname.endsWith('/my-coupons')){contentType='application/json';const c={promotionCode:'123',couponCode:'PRIVATE_CODE',activated,expiryDate:outcome==='expired'?1:Date.now()+86400000};body=JSON.stringify({myCoupons:outcome==='ambiguous'?[c,c]:[c]});}
    else body=`<script>window.miglog={account:{anonymous:${outcome==='anonymous'}}};window.ACC={config:{CSRFToken:'fixture'}};</script>`;
    await r.respond({status:200,contentType,body});
