@@ -57,7 +57,7 @@ func transformLogin(ctx context.Context, req pluginsdk.HTTPTransformRequest) (*p
 		(req.Method == http.MethodGet || req.Method == http.MethodHead) &&
 		!strings.Contains(strings.ToLower(target.Path), "logout") &&
 		!strings.Contains(strings.ToLower(target.Path), "checkout") &&
-		(!strings.Contains(target.Path, "/cart/") || (target.Path == "/online/he/cart/load" && target.RawQuery == "")) && len(req.Headers.Values("Authorization")) == 0 {
+		(!strings.Contains(target.Path, "/cart/") || (target.Path == "/online/he/cart/load" && (target.RawQuery == "" || (req.Method == http.MethodGet && target.RawQuery == "restoreCart=true")))) && len(req.Headers.Values("Authorization")) == 0 {
 		cookie := sessionCookie(req.CredentialInstance)
 		out := &pluginsdk.HTTPTransformResponse{Body: req.Body, Headers: []pluginsdk.HeaderMutation{{Op: pluginsdk.HeaderDel, Name: "Cookie"}}}
 		if cookie != "" {

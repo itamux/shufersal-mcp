@@ -5,7 +5,7 @@ import { z } from 'zod';
 import { Shufersal, AuthenticationError } from './shufersal.js';
 
 const shopping = new Shufersal();
-const server = new McpServer({ name: 'itamux-shufersal', version: '0.4.5' });
+const server = new McpServer({ name: 'itamux-shufersal', version: '0.4.6' });
 function tool(name, description, inputSchema, call) {
   server.registerTool(name, { description: description + (!['open_shufersal', 'login_shufersal'].includes(name) ? ' The server refreshes a logged-out session once before starting this operation. Failed writes are never replayed automatically.' : ''), inputSchema }, async args => {
     try {
