@@ -24,7 +24,8 @@
     "shopping.js",
     "catalog.js",
     "coupons.js",
-    "order-care.js"
+    "order-care.js",
+    "replacement-request.js"
   ],
   "engines": {
     "node": ">=22.12"

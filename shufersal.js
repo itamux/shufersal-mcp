@@ -3,6 +3,7 @@ import { prepareCoupon, activateCouponAndVerify } from './coupons.js';
 import { catalogQuery, readCatalog, readCategories, readCoupons, readSales, readPromotionProducts } from './catalog.js';
 import { parseCart, cartWrite, verifyCart, readOrders } from './shopping.js';
 import { inspectShortages, previewOrderChanges, replacementCandidates, OrderCareError } from './order-care.js';
+import { replacementLink, readReplacementRequest, recordReplacementSnapshot, reconcileReplacementViews, replacementEditGuard } from './replacement-request.js';
 
 export const ORIGIN = 'https://www.shufersal.co.il';
 export const HOME = `${ORIGIN}/online/he/`;
@@ -43,8 +44,10 @@ export class AuthenticationError extends Error {
 }
 
 export class Shufersal {
-  constructor({ env = process.env, launch = puppeteer.launch.bind(puppeteer) } = {}) {
+  constructor({ env = process.env, launch = puppeteer.launch.bind(puppeteer), replacementFetch = fetch } = {}) {
     this.env = env;
+    this.replacementFetch = replacementFetch;
+    this.replacementSnapshots = new Map();
     this.launch = launch;
     this.pending = Promise.resolve();
     this.loginPending = false;
@@ -249,36 +252,40 @@ export class Shufersal {
     return this.run(async () => (await this.accountPage({ restoreCart: false })).evaluate(readOrders, { orderNumber }));
   }
 
-  orderShortages(orderNumber) {
+  orderShortages(orderNumber, replacementUrl) {
     return this.run(async () => {
       const page = await this.accountPage({ restoreCart: false });
       const order = await page.evaluate(readOrders, { orderNumber });
+      const replacement = await this.replacementContext(orderNumber, replacementUrl);
+      const report = options => reconcileReplacementViews(order, inspectShortages(order, options), replacement);
       // Only a positively identified editing cart can be compared to this order.
       // Never infer the association from item overlap or an empty draft cart.
       const editingOrder = () => {
         const value = window.miglog?.cart?.order;
         return typeof value === 'string' ? value : typeof value?.code === 'string' ? value.code : null;
       };
-      if (await page.evaluate(editingOrder) !== orderNumber) return inspectShortages(order);
+      if (await page.evaluate(editingOrder) !== orderNumber) return report();
       let cart;
       try { cart = await this.readCart(page); }
-      catch { return inspectShortages(order, { cartCoverage: 'read_failed' }); }
+      catch { return report({ cartCoverage: 'read_failed' }); }
       // Re-read server-rendered context: another client may have changed the
       // session cart while this page still held the old order identifier.
       try {
         const refreshed = await this.navigate(HOME);
         if (!await this.authenticated(refreshed) || await refreshed.evaluate(editingOrder) !== orderNumber) {
-          return inspectShortages(order, { cartCoverage: 'context_changed' });
+          return report({ cartCoverage: 'context_changed' });
         }
-      } catch { return inspectShortages(order, { cartCoverage: 'context_verification_failed' }); }
-      return inspectShortages(order, { cart });
+      } catch { return report({ cartCoverage: 'context_verification_failed' }); }
+      return report({ cart });
     });
   }
 
-  previewOrderEdit({ order_number: orderNumber, changes }) {
+  previewOrderEdit({ order_number: orderNumber, changes, replacement_url: replacementUrl }) {
     return this.run(async () => {
       const page = await this.accountPage({ restoreCart: false });
-      return previewOrderChanges(await page.evaluate(readOrders, { orderNumber }), changes);
+      const order = await page.evaluate(readOrders, { orderNumber });
+      const preview = previewOrderChanges(order, changes);
+      return { ...preview, replacementGuard: replacementEditGuard(await this.replacementContext(orderNumber, replacementUrl)) };
     });
   }
 
@@ -295,8 +302,39 @@ export class Shufersal {
     });
   }
 
+  // Internal helpers run within the same serialized queue as order operations.
+  rememberReplacement(snapshot) {
+    if (!snapshot.orderNumber) return snapshot;
+    const recorded = recordReplacementSnapshot(snapshot, this.replacementSnapshots.get(snapshot.orderNumber));
+    this.replacementSnapshots.delete(snapshot.orderNumber);
+    this.replacementSnapshots.set(snapshot.orderNumber, recorded);
+    if (this.replacementSnapshots.size > 50) this.replacementSnapshots.delete(this.replacementSnapshots.keys().next().value);
+    return recorded;
+  }
+
+  async readReplacement(url) {
+    return this.rememberReplacement(await readReplacementRequest(url, { fetcher: this.replacementFetch }));
+  }
+
+  replacementRequest(url) {
+    return this.run(() => this.readReplacement(url));
+  }
+
+  async replacementContext(orderNumber, url) {
+    const cached = this.replacementSnapshots.get(orderNumber) || null;
+    if (!url) return { snapshot: cached, fresh: false, readState: cached ? 'cached_not_rechecked' : 'not_provided' };
+    replacementLink(url); // Invalid links fail before network access.
+    let snapshot;
+    try { snapshot = await readReplacementRequest(url, { fetcher: this.replacementFetch }); }
+    catch { return { snapshot: cached, fresh: false, readState: 'read_failed' }; }
+    if (!snapshot.orderNumber) return { snapshot: cached, fresh: false, readState: snapshot.state };
+    if (snapshot.orderNumber !== orderNumber) throw new OrderCareError('The SMS request belongs to a different order; it was not combined with this order.');
+    return { snapshot: this.rememberReplacement(snapshot), fresh: true, readState: 'read' };
+  }
+
   async close() {
     await this.pending;
     await this.browser?.close();
+    this.replacementSnapshots.clear();
   }
 }

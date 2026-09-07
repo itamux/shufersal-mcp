@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import puppeteer from 'puppeteer';
 import { Shufersal, HOME, allowedRequest } from '../shufersal.js';
 
-for (const scenario of ['draft', 'matching', 'foreign', 'cart-failure', 'context-change', 'preview', 'replacements']) {
+for (const scenario of ['draft', 'matching', 'foreign', 'cart-failure', 'context-change', 'preview', 'replacements', 'sms-choice', 'sms-preview']) {
   test(`order care without live orders: ${scenario}`, async () => {
     const requests = [];
     let identity = ['matching', 'cart-failure', 'context-change'].includes(scenario) ? { code: 'O_1' } : scenario === 'foreign' ? 'O_2' : null;
@@ -37,13 +37,33 @@ for (const scenario of ['draft', 'matching', 'foreign', 'cart-failure', 'context
         }; }); return page;
       }; return browser;
     };
-    const s = new Shufersal({ launch });
+    let smsReads = 0;
+    const replacementUrl = 'https://services.shufersal.co.il/cfcalternative/?e=0&t=FIXTURE_ONLY_PRIVATE_TOKEN_123456';
+    const s = new Shufersal({ launch, replacementFetch: async (url, options) => {
+      smsReads++;
+      assert.ok(url.endsWith('/Correlate/GetOrder'));
+      assert.equal(options.redirect, 'error');
+      return new Response(JSON.stringify({ Error: { ErrorCode: 0 }, Content: {
+        Order: [{ OrderNumber: 'O_1', IsExpired: false, IsReadOnly: false }],
+        Products: [{ ProductID: 1, CustomerCoordinationRequired: 6 }],
+        AlternativeProducts: [{ ProductID: 3, ParentProductId: 1, CorrelateItemStatusCode: 1, RequestedQuantity: 1 }],
+      } }), { headers: { 'content-type': 'application/json' } });
+    } });
     try {
       const active = await s.orderHistory({ activeOnly: true });
       assert.equal(active.orders[0].active, true);
-      if (scenario === 'preview') {
-        const result = await s.previewOrderEdit({ order_number: 'O_1', changes: [{ product_code: 'P_1', selling_method: 'BY_UNIT', expected_quantity: 2, quantity: 1 }] });
+      if (scenario === 'sms-choice') {
+        const result = await s.orderShortages('O_1', replacementUrl);
+        assert.equal(result.issues[0].resolution, 'sms_replacement_reported');
+        assert.equal(result.issues[0].needsReplacementDecision, null);
+        assert.equal(smsReads, 1);
+        assert.ok(!JSON.stringify(result).includes('PRIVATE_TOKEN'));
+      } else if (scenario === 'preview' || scenario === 'sms-preview') {
+        const result = await s.previewOrderEdit({ order_number: 'O_1', replacement_url: scenario === 'sms-preview' ? replacementUrl : undefined, changes: [{ product_code: 'P_1', selling_method: 'BY_UNIT', expected_quantity: 2, quantity: 1 }] });
         assert.equal(result.canApply, false); assert.equal(result.changes[0].quantity, 1);
+        assert.equal(result.replacementGuard.canStartEdit, false);
+        assert.equal(result.replacementGuard.recordedChoices.length, scenario === 'sms-preview' ? 1 : 0);
+        assert.equal(smsReads, scenario === 'sms-preview' ? 1 : 0);
       } else if (scenario === 'replacements') {
         const result = await s.orderReplacements({ order_number: 'O_1', product_code: 'P_1', selling_method: 'BY_UNIT', query: 'alternative' });
         assert.equal(result.candidates[0].code, 'P_3');

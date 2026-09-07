@@ -138,13 +138,14 @@ requested quantity can be added. Cart stock/error verification still applies.
 
 ## Active orders, shortages, and edit previews (0.6)
 
-Four additional tools support order care without starting an edit or requiring an
-SMS replacement link:
+Five additional tools support order care without starting an edit. SMS inspection
+uses an optional private replacement link:
 
 | Tool | Behavior |
 | --- | --- |
 | `get_shufersal_active_orders` | List only the account's active orders, with `limit`/`offset` pagination. |
-| `get_shufersal_order_shortages` | Read an order's explicit shortage flags and compare its already-open editing cart, if positively linked to the same order. |
+| `get_shufersal_order_shortages` | Read website shortages and compare a linked editing cart; optionally reconcile a private `replacement_url` as an independent view. |
+| `get_shufersal_replacement_request` | Read the private SMS replacement request directly, without rendering the app or submitting choices. |
 | `preview_shufersal_order_edit` | Preview absolute quantity changes against a fresh order, checking `expected_quantity`; zero removes a product and expected zero denotes an addition. |
 | `find_shufersal_order_replacements` | Search the full catalog for alternatives to a selected order product, using a required query and the catalog's existing filters, sorting, and pagination. |
 
@@ -159,8 +160,8 @@ Shortage reports identify their sources. They include stock and calculation
 flags found only in the editing cart, and report additions, missing rows, and
 quantity differences separately. Those differences may be intentional edits.
 Order stock flags missing from the response remain unknown. Reports always
-include source coverage and `complete: false`: SMS replacement data is not yet
-supported, and an empty issue list does not guarantee fulfillment. An ordinary
+include source coverage and `complete: false`: SMS data is included only when a link is supplied or a sanitized snapshot is
+available in this process, and an empty issue list does not guarantee fulfillment. An ordinary
 empty cart is never compared with a placed order. The editing-cart association
 is checked against fresh server-rendered state before and after the read; a
 changed or unverifiable context causes that cart snapshot to be discarded.
@@ -184,4 +185,57 @@ blocks automatic restore requests except for the server's explicit draft-cart
 initialization, which is also skipped when an order is being edited. Existing
 draft-cart writes still reject order-edit sessions. Tests use intercepted
 synthetic HTML/JSON, including a context change, partial coverage, and a shortage
-absent from the order response. No real order or SMS message is used.
+absent from the order response. No live order or replacement submission is used in tests.
+
+
+## Independent website and SMS replacement views
+
+The SMS page is a separate service at `services.shufersal.co.il`. Its public
+client identifies `POST /CorrelateServer/api/Correlate/GetOrder` as the read
+operation. The MCP sends only the link token, a null order number, and production
+environment `0` to that fixed endpoint. Only the exact HTTPS SMS host/path and
+one token are accepted; redirects, alternate environments, and arbitrary URLs
+are rejected. The browser's origin allowlist is not expanded.
+
+The app is never loaded for inspection: its public code can automatically invoke
+`SetOrder` when no alternative choices are offered. `SetOrder`, `SetOrderBasket`,
+`SetOrderBasketSilent`, and inventory/submission operations are not implemented.
+Public contract reference: [app.389cdd14.js](https://services.shufersal.co.il/cfcalternative/js/app.389cdd14.js).
+
+`get_shufersal_replacement_request` takes `replacement_url`. It returns original
+products, alternatives, raw coordination/status codes, service-reported selection
+state, expiry/read-only state, and a sanitized snapshot. Promotion-gift choices
+and final-basket data are not projected; this coverage limit is explicit. Selected alternatives
+are not proof of final basket confirmation or fulfillment; terminal service
+statuses are not treated as submission receipts. Account identifiers other than
+the order number, token fields, and raw error messages are excluded. Responses
+are bounded to 2 MiB and reads time out after 20 seconds.
+
+Both `get_shufersal_order_shortages` and `preview_shufersal_order_edit` accept an
+optional `replacement_url`. A fresh response must identify the requested order
+before it is associated with website data. Expired or failed reads cannot establish
+a new association. Reports retain the `websiteOrder` and `replacementRequest`
+views separately, and distinguish:
+
+- `sms_replacement_reported`: the service reports a selection; an unavailable
+  original on the website does not prove that selection failed.
+- `sms_choice_previously_recorded`: a cached selection that was not freshly verified.
+- `conflicting_information`: ambiguous mappings/selections or previously recorded
+  choices that disappeared or changed. No cause is inferred.
+- `unresolved_in_checked_sources`: no associated choice in the checked data; partial
+  coverage is still explicit and no fulfillment guarantee is made.
+
+The user reports that editing a website order can invalidate SMS replacements.
+This interaction has not been directly verified. Edit previews therefore include
+`replacementGuard`: the recorded choices, their snapshot identifier, source
+freshness, the invalidation risk, and the required checks before and after any
+future edit. A future start-edit action must explain that risk and obtain explicit
+approval, preserve the choices, then re-read both views after saving. Nothing is
+silently reapplied. Native edit actions remain unavailable.
+
+Snapshots retain sanitized service data for up to 50 orders in MCP process memory
+only. Later reads report removed or changed choices; failed or expired reads retain
+prior choices as stale. Restarting/closing the server clears this history. Links
+and tokens are not retained by the MCP reader or included in results; clients
+should also avoid logging private tool arguments. This is not durable storage or
+a cross-device synchronization service.
