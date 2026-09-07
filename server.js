@@ -2,15 +2,16 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
-import { Shufersal } from './shufersal.js';
+import { Shufersal, AuthenticationError } from './shufersal.js';
 
 const shopping = new Shufersal();
-const server = new McpServer({ name: 'itamux-shufersal', version: '0.4.4' });
+const server = new McpServer({ name: 'itamux-shufersal', version: '0.4.5' });
 function tool(name, description, inputSchema, call) {
-  server.registerTool(name, { description, inputSchema }, async args => {
+  server.registerTool(name, { description: description + (!['open_shufersal', 'login_shufersal'].includes(name) ? ' The server refreshes a logged-out session once before starting this operation. Failed writes are never replayed automatically.' : ''), inputSchema }, async args => {
     try {
       return { content: [{ type: 'text', text: JSON.stringify(await call(args)) }] };
-    } catch {
+    } catch (error) {
+      if (error instanceof AuthenticationError) return { isError: true, content: [{ type: 'text', text: error.message }] };
       // Browser/network errors may contain credentials, request bodies or
       // session-bearing URLs. Never return those through MCP or console logs.
       return { isError: true, content: [{ type: 'text', text:

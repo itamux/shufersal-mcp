@@ -39,6 +39,13 @@ export function allowedRequest(url, method, loginPending, body = '', cartPending
     && form.getAll('j_password').length === 1 && form.get('j_password') === PASSWORD;
 }
 
+export class AuthenticationError extends Error {
+  constructor() {
+    super('Login refresh failed. Check the configured credentials or complete any Shufersal verification challenge. No cart or coupon change was attempted.');
+    this.name = 'AuthenticationError';
+  }
+}
+
 export class Shufersal {
   constructor({ env = process.env, launch = puppeteer.launch.bind(puppeteer) } = {}) {
     this.env = env;
@@ -109,10 +116,18 @@ export class Shufersal {
 
   login() {
     return this.run(async () => {
-      const placeholders = loginPlaceholders(this.env);
-      let page = await this.navigate(HOME);
+      const page = await this.navigate(HOME);
       if (await this.authenticated(page)) return { authenticated: true, reused: true };
-      page = await this.navigate(LOGIN);
+      await this.refreshSession();
+      return { authenticated: true, reused: false };
+    });
+  }
+
+  // Called inside run(): never enqueue nested work or replay an operation.
+  async refreshSession() {
+    try {
+      const placeholders = loginPlaceholders(this.env);
+      let page = await this.navigate(LOGIN);
       const validForm = await page.evaluate(expected => {
         const form = document.querySelector('form#loginForm');
         return form?.action === expected && form.method.toLowerCase() === 'post'
@@ -142,25 +157,28 @@ export class Shufersal {
       if (!await this.authenticated(page)) {
         throw new Error('Login not confirmed. Check the Claw Patrol binding, credentials, or a required verification challenge. No automatic retry was made.');
       }
-      return { authenticated: true, reused: false };
-    });
+      return page;
+    } catch {
+      // Do not expose browser errors, credentials, or session-bearing URLs.
+      throw new AuthenticationError();
+    }
   }
 
   search(args) {
     const request = catalogQuery(typeof args === 'string' ? { query: args } : args);
-    return this.run(async () => (await this.navigate(HOME)).evaluate(readCatalog, request));
+    return this.run(async () => (await this.accountPage()).evaluate(readCatalog, request));
   }
 
   categories(args) {
-    return this.run(async () => (await this.navigate(HOME)).evaluate(readCategories, args));
+    return this.run(async () => (await this.accountPage()).evaluate(readCategories, args));
   }
 
   sales(args) {
-    return this.run(async () => (await this.navigate(HOME)).evaluate(readSales, args));
+    return this.run(async () => (await this.accountPage()).evaluate(readSales, args));
   }
 
   promotionProducts(args) {
-    return this.run(async () => (await this.navigate(HOME)).evaluate(readPromotionProducts, args));
+    return this.run(async () => (await this.accountPage()).evaluate(readPromotionProducts, args));
   }
 
   coupons(args) {
@@ -183,8 +201,8 @@ export class Shufersal {
 
   async accountPage() {
     const page = await this.navigate(HOME);
-    if (!await this.authenticated(page)) throw Error('Login required');
-    return page;
+    if (await this.authenticated(page)) return page;
+    return this.refreshSession();
   }
 
   async readCart(page) {
