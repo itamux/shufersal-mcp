@@ -18,13 +18,15 @@ export function parseCart(html) {
       productCode: node.getAttribute('data-product-code'),
       imageUrl: imageUrl([...node.querySelectorAll('.imgContainer img')].flatMap(i => [i.getAttribute('data-src'), i.getAttribute('src')])),
       entryNumber, quantity, sellingMethod,
+      outOfStock: node.classList.contains('miglog-cart-prod-notInStock'),
+      calculationError: node.classList.contains('errorCalc'),
       name: node.getAttribute('data-product-name') || node.querySelector('.miglog-prod-name')?.textContent?.trim() || '',
       price: node.getAttribute('data-product-price') || node.querySelector('.miglog-prod-price')?.textContent?.trim() || null,
     };
   });
   const count = doc.querySelector('#cartTotalItems')?.textContent?.trim();
   if (!items.length && count !== '0') throw Error('Cart format changed or session unavailable');
-  return { items, total: doc.querySelector('.discountCartBottom')?.textContent?.trim() || null };
+  return { items, itemCount: count !== undefined && /^\d+$/.test(count) ? Number(count) : null, total: doc.querySelector('.discountCartBottom')?.textContent?.trim() || null };
 }
 
 export function cartWrite(operation, args, cart) {
@@ -52,6 +54,11 @@ export function cartWrite(operation, args, cart) {
 export function verifyCart(cart, code, method, expected) {
   const rows = cart.items.filter(item => item.productCode === code && item.sellingMethod === method);
   if (rows.length > 1 || Math.abs((rows[0]?.quantity || 0) - expected) > 0.0001) throw Error('Cart change not confirmed; read the cart before retrying');
+  if (expected > 0) {
+    if (rows[0]?.outOfStock) throw Error('Cart change not confirmed: product is out of stock; do not retry adding it');
+    if (rows[0]?.calculationError) throw Error('Cart change not confirmed: Shufersal reports a calculation error; read the cart before retrying');
+    if (cart.itemCount === 0) throw Error('Cart change not confirmed: Shufersal reports an empty cart despite a saved row; do not retry adding it');
+  }
   return cart;
 }
 
