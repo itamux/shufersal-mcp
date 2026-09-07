@@ -42,8 +42,8 @@ const product = {
   selling_method: z.enum(['BY_UNIT', 'BY_WEIGHT']).describe('Selling method code from search or cart'),
 };
 const quantity = z.number().positive().max(1000).describe('Units for BY_UNIT, weight quantity for BY_WEIGHT');
-tool('get_shufersal_cart', 'Read the current authenticated cart, quantities and displayed total.', {}, () => shopping.cart());
-tool('add_to_shufersal_cart', 'Add a product to the draft cart and verify its new quantity. Changes the cart, never checks out. Do not retry automatically.', { ...product, quantity }, args => shopping.changeCart('add', args));
+tool('get_shufersal_cart', 'Read the current authenticated cart, quantities, itemCount, outOfStock and calculationError flags, and displayed total. Unavailable or error rows are not confirmed purchasable items.', {}, () => shopping.cart());
+tool('add_to_shufersal_cart', 'Add a product to the draft cart and verify its new quantity and absence of stock/calculation errors. Changes the cart, never checks out. Do not retry automatically.', { ...product, quantity }, args => shopping.changeCart('add', args));
 tool('update_shufersal_cart_item', 'Set the absolute quantity of one cart product. Requires its current quantity from get_shufersal_cart; rejects stale values. Never edits an existing order.', { ...product, quantity, expected_quantity: quantity }, args => shopping.changeCart('update', args));
 tool('remove_from_shufersal_cart', 'Remove one product from the draft cart and verify removal. Requires its current quantity from get_shufersal_cart.', { ...product, expected_quantity: quantity }, args => shopping.changeCart('remove', args));
 tool('get_shufersal_order_history', 'Read online order history, newest first. Returns order identifiers, dates and totals; does not reorder or cancel.', { limit: z.number().int().min(1).max(100).default(20), offset: z.number().int().min(0).max(10000).default(0) }, args => shopping.orderHistory(args));
