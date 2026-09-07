@@ -1,15 +1,14 @@
 # Shufersal MCP — itamux fork
 
 Headless product search, cart management, and online order history. Based on
-[matipojo/shufersal-mcp](https://github.com/matipojo/shufersal-mcp), with the
-hardened ACS adapter replacing the original browser/tool implementation.
+[matipojo/shufersal-mcp](https://github.com/matipojo/shufersal-mcp), with a standalone browser implementation and verified shopping operations.
 
 ## Tools
 
 | Tool | Behavior |
 | --- | --- |
 | `open_shufersal` | Open the site and check authentication. |
-| `login_shufersal` | Log in once or reuse the gateway session. |
+| `login_shufersal` | Log in once or reuse the browser session. |
 | `search_shufersal` | Find products with filters, sorting and pages of 1–50 items. |
 | `get_shufersal_cart` | Read cart entries, quantities, and displayed total. |
 | `add_to_shufersal_cart` | Add a quantity, then verify the resulting quantity. |
@@ -39,35 +38,32 @@ Use Node 22.12+ and installed Chromium:
 ```sh
 npm ci --ignore-scripts
 export PUPPETEER_EXECUTABLE_PATH=/path/to/chromium
-export SHUFERSAL_EMAIL=PH_shufersal_email
-export SHUFERSAL_PASSWORD=PH_shufersal_password
+export SHUFERSAL_EMAIL='you@example.com'
+export SHUFERSAL_PASSWORD='your-password'
 npm start
 ```
 
-**This distribution requires Claw Patrol-governed egress and its trusted CA.**
-Those two environment values must be the exact placeholders above; real values
-are rejected. Build and approve `gateway-plugin/` in Claw Patrol, configure its
-`shufersal_login` credential for the exact Shufersal HTTPS host, and inject the
-email/password pair into the gateway's primary credential slot from your secret
-store. For ACS, Infisical's separate email/password entries are resolved and
-combined only in gateway memory by the existing value-fill launcher.
+Supply your account email and password through these environment variables, including
+through your preferred secret manager or MCP client's environment configuration.
+No proxy, external credential service, or deployment framework is required.
+Credentials are never accepted as tool arguments or returned in tool results.
 
-The plugin's outbound network capability is required for login. It keeps session
-cookies in memory, loads trusted system PEM roots for macOS Seatbelt, and attaches
-cookies only to upstream requests. Never disable TLS verification or Chromium's
-sandbox. No persistent browser profile, cookie export, or remember-me option.
+MCP transport is stdio (`node server.js`). Chromium runs headlessly with its
+sandbox and TLS verification enabled. Credentials are submitted only to the fixed
+Shufersal HTTPS login endpoint; cookies remain in the ephemeral browser session.
+There is no persistent profile, cookie export, or remember-me option. A new server
+process logs in again. Before shopping operations, an expired session is refreshed
+once and the saved account cart is restored. Verification challenges fail without
+bypasses. Writes are never replayed automatically.
 
-MCP transport is stdio (`node server.js`). Only the fixed Shufersal HTTPS origin
-is allowed. Each cart POST must match one armed request; the gateway separately
-validates its endpoint, fields, quantity, CSRF header and dispatch marker. A new
-gateway process needs a new login. Verification challenges fail without bypasses.
+Only the fixed Shufersal HTTPS origin is allowed. Each cart or coupon POST must
+match one armed request. Merge decisions and checkout remain blocked.
 
 ## Tests
 
 ```sh
 npm test
 npm run test:browser
-cd gateway-plugin && go test -race ./...
 ```
 
 Browser tests intercept all requests with local fixtures; they do not touch a
@@ -102,7 +98,7 @@ and ignored pagination/sorting fail instead of returning misleading results.
   redemption codes. Unexpired does not guarantee remaining uses or eligibility;
   the site decides whether the offer applies. Use the separate activation tool to activate a selected coupon.
 
-The catalog and coupon-list tools are read-only GET operations through the existing gateway. Sale and
+The catalog and coupon-list tools are read-only GET operations. Sale and
 coupon promotion codes can be used to browse eligible products. Availability
 and final discounts depend on the account, selected store and cart conditions.
 No guessed price-range or discount-percent filter is exposed.
@@ -117,10 +113,9 @@ An ambiguous or missing match is rejected. After a failure, read coupon status
 before retrying: the activation may already have happened. There are no automatic
 retries, redemption, purchases, or bulk activation.
 
-Requires gateway plugin v0.4.0, which admits only the fixed activation endpoint,
-a bounded JSON coupon-code body, CSRF and authenticated session, and the
-`Bearer PH_shufersal_coupon` dispatch marker. The coupon code stays internal and
-is redacted at the gateway; MCP returns the public promotion code and verified state.
+Activation uses the fixed coupon endpoint and the authenticated browser session.
+The unique coupon code stays internal; MCP returns the public promotion code and
+verified state.
 
 ## Product images (0.4.1)
 
@@ -129,7 +124,7 @@ order details include `imageUrl`: a public HTTPS Shufersal product image URL,
 or `null` when unavailable. Catalog and order data prefer the medium product
 image; HTML product rows use the image supplied by the site. Default placeholder
 images are omitted. URLs are returned without downloading image files or changing
-the browser's Claw Patrol network permissions.
+the browser's network permissions.
 
 ## Product availability (0.4.3)
 

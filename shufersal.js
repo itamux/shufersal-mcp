@@ -7,20 +7,15 @@ export const ORIGIN = 'https://www.shufersal.co.il';
 export const HOME = `${ORIGIN}/online/he/`;
 export const LOGIN = `${ORIGIN}/online/he/login`;
 export const LOGIN_POST = `${ORIGIN}/online/he/j_spring_security_check`;
-export const EMAIL = 'PH_shufersal_email';
-export const PASSWORD = 'PH_shufersal_password';
-export const AUTHORIZATION = 'Bearer PH_shufersal_login';
 export const COUPON_POST = `${ORIGIN}/online/he/my-account/coupons/activate-coupon`;
-export const COUPON_AUTHORIZATION = 'Bearer PH_shufersal_coupon';
-export const CART_AUTHORIZATION = 'Bearer PH_shufersal_cart';
 
-// Only public placeholders belong in the consumer process. Values are filled
-// by Claw Patrol's shufersal_login credential at the outgoing form boundary.
-export function loginPlaceholders(env) {
-  if (env.SHUFERSAL_EMAIL !== EMAIL || env.SHUFERSAL_PASSWORD !== PASSWORD) {
-    throw new Error('Set SHUFERSAL_EMAIL and SHUFERSAL_PASSWORD to the documented Claw Patrol placeholders.');
+export function loginCredentials(env) {
+  const email = env.SHUFERSAL_EMAIL;
+  const password = env.SHUFERSAL_PASSWORD;
+  if (typeof email !== 'string' || !email.trim() || typeof password !== 'string' || !password) {
+    throw new Error('Set SHUFERSAL_EMAIL and SHUFERSAL_PASSWORD.');
   }
-  return { email: EMAIL, password: PASSWORD };
+  return { email, password };
 }
 
 export function allowedRequest(url, method, loginPending, body = '', cartPending = null, couponPending = null) {
@@ -35,8 +30,8 @@ export function allowedRequest(url, method, loginPending, body = '', cartPending
     && ['/online/he/cart/add', '/online/he/cart/update'].includes(target.pathname)) return true;
   if (method !== 'POST' || url !== LOGIN_POST || !loginPending) return false;
   const form = new URLSearchParams(body);
-  return form.getAll('j_username').length === 1 && form.get('j_username') === EMAIL
-    && form.getAll('j_password').length === 1 && form.get('j_password') === PASSWORD;
+  return form.getAll('j_username').length === 1 && form.get('j_username') === loginPending.email
+    && form.getAll('j_password').length === 1 && form.get('j_password') === loginPending.password;
 }
 
 export class AuthenticationError extends Error {
@@ -78,15 +73,9 @@ export class Shufersal {
           return;
         }
         if (method === 'POST') {
-          // Dispatch marker is attached only to the exact login POST; never
-          // a global browser header or a header carried across redirects.
-          if (url === LOGIN_POST) {
-            headers.authorization = AUTHORIZATION; this.loginPending = false;
-          } else if (url === COUPON_POST) {
-            headers.authorization = COUPON_AUTHORIZATION; this.couponPending = null;
-          } else {
-            headers.authorization = CART_AUTHORIZATION; this.cartPending = null;
-          }
+          if (url === LOGIN_POST) this.loginPending = false;
+          else if (url === COUPON_POST) this.couponPending = null;
+          else this.cartPending = null;
         }
         void request.continue({ headers }).catch(() => {});
       });
@@ -126,7 +115,7 @@ export class Shufersal {
   // Called inside run(): never enqueue nested work or replay an operation.
   async refreshSession() {
     try {
-      const placeholders = loginPlaceholders(this.env);
+      const credentials = loginCredentials(this.env);
       let page = await this.navigate(LOGIN);
       const validForm = await page.evaluate(expected => {
         const form = document.querySelector('form#loginForm');
@@ -136,11 +125,10 @@ export class Shufersal {
           && !!form.querySelector('[name="j_password"]');
       }, LOGIN_POST);
       if (!validForm) throw new Error('Login form unavailable or changed; manual verification required.');
-      this.loginPending = true;
+      this.loginPending = credentials;
       try {
         const navigation = page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 30000 });
-        // Bypass email-format validation of the non-secret placeholder while
-        // preserving Shufersal's real form action, CSRF token and cookies.
+        // Submit the native form with its CSRF token and browser session cookies.
         await Promise.all([navigation, page.evaluate(({ email, password }) => {
           const form = document.querySelector('form#loginForm');
           form.querySelector('[name="j_username"]').value = email;
@@ -148,14 +136,14 @@ export class Shufersal {
           const remember = form.querySelector('[name="remember-me"]');
           if (remember) remember.checked = false;
           HTMLFormElement.prototype.submit.call(form);
-        }, placeholders)]);
+        }, credentials)]);
       } finally {
         this.loginPending = false;
       }
       // Fresh server-rendered state, not a redirect or status-code heuristic.
       page = await this.navigate(HOME);
       if (!await this.authenticated(page)) {
-        throw new Error('Login not confirmed. Check the Claw Patrol binding, credentials, or a required verification challenge. No automatic retry was made.');
+        throw new Error('Login not confirmed. Check credentials or a required verification challenge. No automatic retry was made.');
       }
       return page;
     } catch {

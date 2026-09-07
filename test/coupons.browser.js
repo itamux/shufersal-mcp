@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import puppeteer from 'puppeteer';
-import { Shufersal, COUPON_AUTHORIZATION, COUPON_POST, allowedRequest } from '../shufersal.js';
+import { Shufersal, COUPON_POST, allowedRequest } from '../shufersal.js';
 for(const outcome of ['success','already-active','rejected','expired','ambiguous','anonymous']) {
  test(`coupon activation: ${outcome}`,async()=>{
   let activated=outcome==='already-active';const posts=[];
@@ -17,7 +17,7 @@ for(const outcome of ['success','already-active','rejected','expired','ambiguous
    if(['success','already-active'].includes(outcome)){
     const result=await s.activateCoupon({promotion_code:'123'});assert.equal(result.activated,true);assert.equal(result.verified,true);assert.ok(!JSON.stringify(result).includes('PRIVATE'));
     await s.activateCoupon({promotion_code:'123'});assert.equal(posts.length,outcome==='success'?1:0);
-    if(posts.length) assert.equal(posts[0].headers.authorization,COUPON_AUTHORIZATION);
+    if(posts.length) assert.equal(posts[0].headers.authorization,undefined);
    }else{await assert.rejects(s.activateCoupon({promotion_code:'123'}));assert.equal(posts.length,outcome==='rejected'?1:0);}
    assert.ok(!s.couponPending);
   }finally{await s.close();}

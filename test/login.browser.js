@@ -2,7 +2,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import puppeteer from 'puppeteer';
-import { Shufersal, HOME, LOGIN, LOGIN_POST, EMAIL, PASSWORD, AUTHORIZATION } from '../shufersal.js';
+import { Shufersal, HOME, LOGIN, LOGIN_POST } from '../shufersal.js';
+const EMAIL = 'fixture@example.invalid';
+const PASSWORD = 'fixture-password&=with spaces';
 
 for (const outcome of ['success', 'rejected', 'changed-form']) {
   test(`headless login: ${outcome}`, async () => {
@@ -38,7 +40,7 @@ for (const outcome of ['success', 'rejected', 'changed-form']) {
       assert.equal(posts.length, outcome === 'changed-form' ? 0 : 1);
       for (const post of posts) {
         assert.equal(post.url, LOGIN_POST);
-        assert.equal(post.headers.authorization, AUTHORIZATION);
+        assert.equal(post.headers.authorization, undefined);
         const fields = new URLSearchParams(post.body);
         assert.equal(fields.get('j_username'), EMAIL);
         assert.equal(fields.get('j_password'), PASSWORD);
