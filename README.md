@@ -130,3 +130,13 @@ or `null` when unavailable. Catalog and order data prefer the medium product
 image; HTML product rows use the image supplied by the site. Default placeholder
 images are omitted. URLs are returned without downloading image files or changing
 the browser's Claw Patrol network permissions.
+
+## Product availability (0.4.3)
+
+Search and category products include `stockStatus` (the API stock code, or null)
+and `availability`: `in_stock`, `out_of_stock`, or `unknown`. Missing or
+unrecognized codes remain unknown; they are never treated as in stock.
+Promotion products use explicit in-stock and visible out-of-stock HTML markers.
+Missing or conflicting markers return `stockStatus: null` and `availability: "unknown"`.
+A listing is an availability hint, not a reservation or a guarantee that the
+requested quantity can be added. Cart stock/error verification still applies.
