@@ -3,15 +3,16 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
 import { Shufersal, AuthenticationError } from './shufersal.js';
+import { OrderCareError } from './order-care.js';
 
 const shopping = new Shufersal();
-const server = new McpServer({ name: 'itamux-shufersal', version: '0.5.0' });
+const server = new McpServer({ name: 'itamux-shufersal', version: '0.6.0' });
 function tool(name, description, inputSchema, call) {
-  server.registerTool(name, { description: description + (!['open_shufersal', 'login_shufersal'].includes(name) ? ' The server refreshes a logged-out session once before starting this operation. Failed writes are never replayed automatically.' : ''), inputSchema }, async args => {
+  server.registerTool(name, { description: description + (!['open_shufersal', 'login_shufersal', 'get_shufersal_replacement_request'].includes(name) ? ' The server refreshes a logged-out session once before starting this operation, except during an owned order edit where session loss stops all actions. Failed writes are never replayed automatically.' : ''), inputSchema }, async args => {
     try {
       return { content: [{ type: 'text', text: JSON.stringify(await call(args)) }] };
     } catch (error) {
-      if (error instanceof AuthenticationError) return { isError: true, content: [{ type: 'text', text: error.message }] };
+      if (error instanceof AuthenticationError || error instanceof OrderCareError) return { isError: true, content: [{ type: 'text', text: error.message }] };
       // Browser/network errors may contain credentials, request bodies or
       // session-bearing URLs. Never return those through MCP or console logs.
       return { isError: true, content: [{ type: 'text', text:
@@ -49,6 +50,32 @@ tool('update_shufersal_cart_item', 'Set the absolute quantity of one cart produc
 tool('remove_from_shufersal_cart', 'Remove one product from the draft cart and verify removal. Requires its current quantity from get_shufersal_cart.', { ...product, expected_quantity: quantity }, args => shopping.changeCart('remove', args));
 tool('get_shufersal_order_history', 'Read online order history, newest first. Returns order identifiers, dates and totals; does not reorder or cancel.', { limit: z.number().int().min(1).max(100).default(20), offset: z.number().int().min(0).max(10000).default(0) }, args => shopping.orderHistory(args));
 tool('get_shufersal_order', 'Read purchased products in one order returned by get_shufersal_order_history. Does not change orders or send invoices.', { order_number: z.string().regex(/^[A-Za-z0-9_-]{1,100}$/) }, args => shopping.orderDetails(args.order_number));
+const orderNumber = z.string().regex(/^[A-Za-z0-9_-]{1,100}$/);
+const replacementUrl = z.string().min(1).max(4096).describe('Private original SMS URL; never repeat it in messages or logs');
+tool('get_shufersal_replacement_request', 'Read the SMS replacement service through its fixed GetOrder call without loading the page or submitting choices. Returns service-reported selections separately from the website order. Expired links are explicit; selected does not prove final basket confirmation. Sanitized snapshots remain in process memory for comparison; tokens are not retained.', { replacement_url: replacementUrl }, args => shopping.replacementRequest(args.replacement_url));
+tool('get_shufersal_active_orders', 'Read active orders only, newest first, independently of the shopping cart. Returns explicit site editability (allowed, not_allowed, unknown) and available delivery-window fields. Active does not imply editable. Edit deadlines are unknown; start editing requires explicit current site permission.', { limit: z.number().int().min(1).max(100).default(20), offset: z.number().int().min(0).max(10000).default(0) }, args => shopping.orderHistory({ ...args, activeOnly: true }));
+const editId = z.string().uuid();
+const cartRevision = z.string().regex(/^[a-f0-9]{64}$/);
+tool('start_shufersal_order_edit', 'Open one active, explicitly editable order in this server browser session. First obtain user approval: promotions may be recalculated and SMS replacement choices may be invalidated. Requires an empty shopping cart and saves a private durable item/quantity backup before starting. Optional replacement_url is read and backed up; failure prevents starting. Missing SMS coverage is recorded. Returns editId, backup and editing cart revision. Saving is unavailable: explain that only preparing and discarding an editing basket are supported before starting. No submit, checkout or cancellation. Never retry uncertain starts.', {
+  order_number: orderNumber, acknowledge_repricing_and_sms_reset: z.literal(true), replacement_url: replacementUrl.optional(),
+}, args => shopping.startOrderEdit(args));
+tool('get_shufersal_order_edit', 'Read the edit owned by this MCP process with its cartRevision, current selling methods, stock/calculation flags and backup location. Must be read after an uncertain write. Never logs in again or restores the cart if editing context is lost. Changes remain unsaved; no fulfillment guarantee.', { edit_id: editId }, args => shopping.getOrderEdit(args.edit_id));
+tool('set_shufersal_order_edit_item', 'Set an absolute quantity in an owned editing basket. Use its latest cartRevision and exact current quantity/selling method (including BY_PACKAGE). Zero removes; expected_quantity zero adds a new product. Verifies quantity, stock/calculation flags and unchanged other rows. Does not save the order. After any failure read the edit before deciding what to do; never retry writes automatically.', {
+  edit_id: editId, cart_revision: cartRevision, product_code: code, selling_method: z.enum(['BY_UNIT', 'BY_WEIGHT', 'BY_PACKAGE']),
+  expected_quantity: z.number().min(0).max(1000), quantity: z.number().min(0).max(1000),
+}, args => shopping.changeOrderEdit(args));
+tool('discard_shufersal_order_edit', 'Discard the owned unsaved editing basket using the native exit action. Obtain user approval to lose unsaved changes. Requires the latest cartRevision and verifies the original placed order is unchanged. This does not cancel the order. Backup retained; never retry an uncertain discard.', {
+  edit_id: editId, cart_revision: cartRevision, confirm_discard: z.literal(true),
+}, args => shopping.discardOrderEdit(args));
+tool('get_shufersal_order_shortages', 'Check explicit order shortages and, only if already linked to this order, editing-cart stock and calculation flags. Reports quantity differences separately from shortages. Optionally read a private SMS replacement link; report website and SMS views separately. Recorded choices must not trigger duplicate shortage alerts. Cached choices are marked stale. Coverage is partial; no all-clear. Does not start an edit or restore a cart.', { order_number: orderNumber, replacement_url: replacementUrl.optional() }, args => shopping.orderShortages(args.order_number, args.replacement_url));
+tool('preview_shufersal_order_edit', 'Preview absolute quantity changes against a fresh active order. expected_quantity must match the current order (zero for new products). quantity zero means removal. Does not start, save, discard, or apply edits. Revised prices and delivery eligibility remain unknown. Reports the risk that editing may invalidate SMS choices; use replacement_url for a fresh check. Never automatically reapply choices.', {
+  order_number: orderNumber, replacement_url: replacementUrl.optional(),
+  changes: z.array(z.object({ ...product, quantity: z.number().min(0).max(1000), expected_quantity: z.number().min(0).max(1000) })).min(1).max(100),
+}, args => shopping.previewOrderEdit(args));
+tool('find_shufersal_order_replacements', 'Search the full catalog for alternatives to one active-order product using your query and optional catalog filters. Excludes the original and out-of-stock results. Unknown stock is excluded unless requested. Does not assume dietary/package equivalence or delivery eligibility and never applies replacements. Pagination refers to the unfiltered catalog page.', {
+  ...catalog, ...product, order_number: orderNumber,
+  query: z.string().trim().min(1).max(200).regex(/^[^:\x00-\x1f]+$/), include_unknown: z.boolean().default(false),
+}, args => shopping.orderReplacements(args));
 let closing = false;
 async function close() {
   if (closing) return;
