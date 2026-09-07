@@ -135,3 +135,53 @@ Promotion products use explicit in-stock and visible out-of-stock HTML markers.
 Missing or conflicting markers return `stockStatus: null` and `availability: "unknown"`.
 A listing is an availability hint, not a reservation or a guarantee that the
 requested quantity can be added. Cart stock/error verification still applies.
+
+## Active orders, shortages, and edit previews (0.6)
+
+Four additional tools support order care without starting an edit or requiring an
+SMS replacement link:
+
+| Tool | Behavior |
+| --- | --- |
+| `get_shufersal_active_orders` | List only the account's active orders, with `limit`/`offset` pagination. |
+| `get_shufersal_order_shortages` | Read an order's explicit shortage flags and compare its already-open editing cart, if positively linked to the same order. |
+| `preview_shufersal_order_edit` | Preview absolute quantity changes against a fresh order, checking `expected_quantity`; zero removes a product and expected zero denotes an addition. |
+| `find_shufersal_order_replacements` | Search the full catalog for alternatives to a selected order product, using a required query and the catalog's existing filters, sorting, and pagination. |
+
+Order history and details now expose `editability` from the explicit site
+`isUpdatable` flag: `allowed`, `not_allowed`, or `unknown`. Active membership comes
+from the account's active-order list, not from the draft cart or an inferred
+status name. Available consignment delivery-window text is projected without
+addresses or tracking links. `editDeadline` remains null; a reported edit flag
+is not a guarantee that an edit will still be accepted later.
+
+Shortage reports identify their sources. They include stock and calculation
+flags found only in the editing cart, and report additions, missing rows, and
+quantity differences separately. Those differences may be intentional edits.
+Order stock flags missing from the response remain unknown. Reports always
+include source coverage and `complete: false`: SMS replacement data is not yet
+supported, and an empty issue list does not guarantee fulfillment. An ordinary
+empty cart is never compared with a placed order. The editing-cart association
+is checked against fresh server-rendered state before and after the read; a
+changed or unverifiable context causes that cart snapshot to be discarded.
+
+Replacement candidates exclude the original product, explicit out-of-stock
+products, and duplicates. Unknown stock is omitted unless `include_unknown` is
+true. Results cover one catalog page; pagination totals refer to the original
+catalog search. Product price, unit description, and promotion fields remain
+available for comparison, but dietary equivalence and availability for this
+order's delivery are not inferred. No replacement is applied.
+
+Edit previews return `applied: false`, `canApply: false`, a quantity diff, and
+`revisedTotal: null`. Closed orders, an explicit denial of editability, ambiguous
+changes, and stale expected quantities are rejected. The native start/save/
+discard edit lifecycle and SMS replacement submission are deliberately not
+exposed until their complete behavior can be verified with an eligible order.
+Discarding an edit must never be implemented as cancelling an order.
+
+The new order-care operations do not restore the shopping cart. The browser
+blocks automatic restore requests except for the server's explicit draft-cart
+initialization, which is also skipped when an order is being edited. Existing
+draft-cart writes still reject order-edit sessions. Tests use intercepted
+synthetic HTML/JSON, including a context change, partial coverage, and a shortage
+absent from the order response. No real order or SMS message is used.

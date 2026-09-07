@@ -9,7 +9,7 @@ test('stdio discovery works and missing login configuration fails without leakin
   try {
     await client.connect(transport);
     const { tools } = await client.listTools();
-    assert.deepEqual(tools.map(t => t.name).sort(), ['activate_shufersal_coupon', 'browse_shufersal_category', 'get_shufersal_categories', 'get_shufersal_sales', 'get_shufersal_promotion_products', 'get_shufersal_personal_coupons', 'add_to_shufersal_cart', 'get_shufersal_cart', 'get_shufersal_order', 'get_shufersal_order_history', 'login_shufersal', 'open_shufersal', 'remove_from_shufersal_cart', 'search_shufersal', 'update_shufersal_cart_item'].sort());
+    assert.deepEqual(tools.map(t => t.name).sort(), ['get_shufersal_active_orders', 'get_shufersal_order_shortages', 'preview_shufersal_order_edit', 'find_shufersal_order_replacements', 'activate_shufersal_coupon', 'browse_shufersal_category', 'get_shufersal_categories', 'get_shufersal_sales', 'get_shufersal_promotion_products', 'get_shufersal_personal_coupons', 'add_to_shufersal_cart', 'get_shufersal_cart', 'get_shufersal_order', 'get_shufersal_order_history', 'login_shufersal', 'open_shufersal', 'remove_from_shufersal_cart', 'search_shufersal', 'update_shufersal_cart_item'].sort());
     assert.deepEqual(tools.find(t => t.name === 'login_shufersal').inputSchema.properties, {});
     const result = await client.callTool({ name: 'login_shufersal', arguments: {} });
     assert.equal(result.isError, true);

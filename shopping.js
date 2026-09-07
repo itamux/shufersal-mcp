@@ -66,14 +66,21 @@ export function verifyCart(cart, code, method, expected) {
 }
 
 // Project inside Chromium: account/contact/payment fields never cross MCP.
-export async function readOrders({ orderNumber, limit = 20, offset = 0 } = {}) {
+export async function readOrders({ orderNumber, limit = 20, offset = 0, activeOnly = false } = {}) {
   const imageUrl = values => values.find(v => typeof v === 'string'
     && /^https:\/\/(?:res\.cloudinary\.com\/shufersal\/image\/upload\/|media\.shufersal\.co\.il\/product_images\/)[^\s?#]+$/.test(v) && !v.includes('/default/')) || null;
   const scalar = value => ['string', 'number', 'boolean'].includes(typeof value) ? value : null;
   const price = value => value && typeof value === 'object' ? { value: scalar(value.value), currency: scalar(value.currencyIso), formatted: scalar(value.formattedValue) } : null;
   const summary = o => ({ orderNumber: o.code, created: scalar(o.created), date: scalar(o.createdString),
     status: scalar(o.customerStatus?.code || o.status?.code), total: price(o.totalPriceWithTax || o.totalPrice),
-    totalItems: scalar(o.totalItems), active: o.isActive === true });
+    totalItems: scalar(o.totalItems), active: activeCodes.has(o.code),
+    // Expose the site flag without inferring permission from a status name.
+    editability: o.isUpdatable === true ? 'allowed' : o.isUpdatable === false ? 'not_allowed' : 'unknown',
+    editDeadline: null,
+    deliveryWindows: (Array.isArray(o.consignments) ? o.consignments : []).map(c => ({
+      start: scalar(c.timeSlotStartTimeString), end: scalar(c.timeSlotEndTimeString),
+    })).filter(w => w.start !== null || w.end !== null),
+  });
   const read = async path => {
     const r = await fetch(path, { headers: { accept: 'application/json', 'x-requested-with': 'XMLHttpRequest' },
       credentials: 'same-origin', redirect: 'error', signal: AbortSignal.timeout(20000) });
@@ -82,17 +89,19 @@ export async function readOrders({ orderNumber, limit = 20, offset = 0 } = {}) {
   };
   const data = await read('/online/he/my-account/orders');
   if (!Array.isArray(data.activeOrders) || !Array.isArray(data.closedOrders)) throw Error('Order history format changed');
+  const activeCodes = new Set(data.activeOrders.map(o => o.code));
   const rows = [...data.activeOrders, ...data.closedOrders];
+  if (new Set(rows.map(o => o.code)).size !== rows.length) throw Error('Ambiguous order history');
   if (!rows.every(o => typeof o.code === 'string' && typeof o.created === 'number')) throw Error('Order format changed');
   if (!orderNumber) {
-    rows.sort((a,b) => b.created - a.created);
-    return { orders: rows.slice(offset, offset + limit).map(summary), total: rows.length, offset,
-      hasMore: offset + limit < rows.length, historyFrom: scalar(data.from), historyTo: scalar(data.to) };
+    const selected = (activeOnly ? rows.filter(o => activeCodes.has(o.code)) : rows).sort((a,b) => b.created - a.created);
+    return { orders: selected.slice(offset, offset + limit).map(summary), total: selected.length, offset,
+      hasMore: offset + limit < selected.length, historyFrom: scalar(data.from), historyTo: scalar(data.to) };
   }
   if (!/^[A-Za-z0-9_-]{1,100}$/.test(orderNumber) || !rows.some(o => o.code === orderNumber)) throw Error('Order is not in account history');
   const order = await read('/online/he/my-account/orders/' + encodeURIComponent(orderNumber));
   if (order.code !== orderNumber || !Array.isArray(order.entries)) throw Error('Order details unavailable');
-  if (!order.entries.every(e => e.product && typeof e.product.code === 'string' && typeof e.quantity === 'number')) throw Error('Order item format changed');
+  if (!order.entries.every(e => e.product && typeof e.product.code === 'string' && Number.isFinite(e.quantity) && e.quantity >= 0 && (e.frontQuantity == null || (Number.isFinite(e.frontQuantity) && e.frontQuantity >= 0)))) throw Error('Order item format changed');
   return { ...summary(order), items: order.entries.map(e => ({
     productCode: e.product.code,
     imageUrl: imageUrl([e.product.baseProductImageMedium, ...(Array.isArray(e.product.images) ? e.product.images.filter(i => i.format === 'product').map(i => i.url) : []), e.product.baseProductImageLarge, e.product.baseProductImageSmall]),
@@ -100,5 +109,6 @@ export async function readOrders({ orderNumber, limit = 20, offset = 0 } = {}) {
     sellingMethod: scalar(e.customerSellingMethod?.code || e.product.sellingMethod?.code),
     unitDescription: scalar(e.product.unitDescription), unitPrice: price(e.basePrice), total: price(e.totalPrice),
     outOfStock: e.outOfStock === true,
+    stockSignal: e.outOfStock === true ? 'out_of_stock' : e.outOfStock === false ? 'not_marked_unavailable' : 'unknown',
   })) };
 }

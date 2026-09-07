@@ -2,6 +2,7 @@ import puppeteer from 'puppeteer';
 import { prepareCoupon, activateCouponAndVerify } from './coupons.js';
 import { catalogQuery, readCatalog, readCategories, readCoupons, readSales, readPromotionProducts } from './catalog.js';
 import { parseCart, cartWrite, verifyCart, readOrders } from './shopping.js';
+import { inspectShortages, previewOrderChanges, replacementCandidates, OrderCareError } from './order-care.js';
 
 export const ORIGIN = 'https://www.shufersal.co.il';
 export const HOME = `${ORIGIN}/online/he/`;
@@ -68,7 +69,8 @@ export class Shufersal {
         const method = request.method();
         const headers = { ...request.headers() };
         delete headers.authorization;
-        if (!allowedRequest(url, method, this.loginPending, request.postData(), this.cartPending, this.couponPending)) {
+        if ((url === `${HOME}cart/load?restoreCart=true` && !this.restoringCart)
+          || !allowedRequest(url, method, this.loginPending, request.postData(), this.cartPending, this.couponPending)) {
           void request.abort().catch(() => {});
           return;
         }
@@ -77,6 +79,7 @@ export class Shufersal {
           else if (url === COUPON_POST) this.couponPending = null;
           else this.cartPending = null;
         }
+        if (url === `${HOME}cart/load?restoreCart=true`) this.restoringCart = false;
         void request.continue({ headers }).catch(() => {});
       });
     }
@@ -187,22 +190,27 @@ export class Shufersal {
     });
   }
 
-  async accountPage() {
+  async accountPage({ restoreCart = true } = {}) {
     let page = await this.navigate(HOME);
     if (!await this.authenticated(page)) page = await this.refreshSession();
     if (await page.evaluate(() => !!window.miglog?.showMergeCarts)) throw Error('Cart merge decision required; no shopping operation started');
     // Match native page initialization: login alone can expose an empty session cart.
-    await this.readCart(page, true);
+    // Order reads must not populate or replace an editing cart. Draft shopping
+    // operations also leave an existing order-edit session untouched.
+    if (restoreCart && !await page.evaluate(() => !!window.miglog?.cart?.order)) await this.readCart(page, true);
     return page;
   }
 
   async readCart(page, restore = false) {
-    const html = await page.evaluate(async restore => {
-      const r = await fetch('/online/he/cart/load' + (restore ? '?restoreCart=true' : ''), { credentials: 'same-origin', redirect: 'error', signal: AbortSignal.timeout(20000) });
-      if (!r.ok) throw Error('Cart unavailable');
-      return r.text();
-    }, restore);
-    return page.evaluate(parseCart, html);
+    this.restoringCart = restore;
+    try {
+      const html = await page.evaluate(async restore => {
+        const r = await fetch('/online/he/cart/load' + (restore ? '?restoreCart=true' : ''), { credentials: 'same-origin', redirect: 'error', signal: AbortSignal.timeout(20000) });
+        if (!r.ok) throw Error('Cart unavailable');
+        return r.text();
+      }, restore);
+      return await page.evaluate(parseCart, html);
+    } finally { this.restoringCart = false; }
   }
 
   cart() {
@@ -234,11 +242,57 @@ export class Shufersal {
   }
 
   orderHistory(args = {}) {
-    return this.run(async () => (await this.accountPage()).evaluate(readOrders, args));
+    return this.run(async () => (await this.accountPage({ restoreCart: false })).evaluate(readOrders, args));
   }
 
   orderDetails(orderNumber) {
-    return this.run(async () => (await this.accountPage()).evaluate(readOrders, { orderNumber }));
+    return this.run(async () => (await this.accountPage({ restoreCart: false })).evaluate(readOrders, { orderNumber }));
+  }
+
+  orderShortages(orderNumber) {
+    return this.run(async () => {
+      const page = await this.accountPage({ restoreCart: false });
+      const order = await page.evaluate(readOrders, { orderNumber });
+      // Only a positively identified editing cart can be compared to this order.
+      // Never infer the association from item overlap or an empty draft cart.
+      const editingOrder = () => {
+        const value = window.miglog?.cart?.order;
+        return typeof value === 'string' ? value : typeof value?.code === 'string' ? value.code : null;
+      };
+      if (await page.evaluate(editingOrder) !== orderNumber) return inspectShortages(order);
+      let cart;
+      try { cart = await this.readCart(page); }
+      catch { return inspectShortages(order, { cartCoverage: 'read_failed' }); }
+      // Re-read server-rendered context: another client may have changed the
+      // session cart while this page still held the old order identifier.
+      try {
+        const refreshed = await this.navigate(HOME);
+        if (!await this.authenticated(refreshed) || await refreshed.evaluate(editingOrder) !== orderNumber) {
+          return inspectShortages(order, { cartCoverage: 'context_changed' });
+        }
+      } catch { return inspectShortages(order, { cartCoverage: 'context_verification_failed' }); }
+      return inspectShortages(order, { cart });
+    });
+  }
+
+  previewOrderEdit({ order_number: orderNumber, changes }) {
+    return this.run(async () => {
+      const page = await this.accountPage({ restoreCart: false });
+      return previewOrderChanges(await page.evaluate(readOrders, { orderNumber }), changes);
+    });
+  }
+
+  orderReplacements({ order_number: orderNumber, product_code: productCode, selling_method: sellingMethod, include_unknown: includeUnknown = false, ...args }) {
+    const request = catalogQuery(args);
+    return this.run(async () => {
+      const page = await this.accountPage({ restoreCart: false });
+      const order = await page.evaluate(readOrders, { orderNumber });
+      if (!order.active) throw new OrderCareError('This order is not active.');
+      if (order.items.filter(i => i.productCode === productCode && i.sellingMethod === sellingMethod).length !== 1) {
+        throw new OrderCareError('Select one unambiguous product and selling method from the order.');
+      }
+      return replacementCandidates(order, productCode, sellingMethod, await page.evaluate(readCatalog, request), includeUnknown);
+    });
   }
 
   async close() {

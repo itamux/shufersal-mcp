@@ -18,3 +18,26 @@ test('an empty history is valid; an auth page or malformed data is not',async t=
   globalThis.fetch=async()=>new Response('<form>Login</form>',{headers:{'content-type':'text/html'}});
   await assert.rejects(readOrders(),/unavailable/);
 });
+
+test('active grouping is authoritative and editability is never inferred from activity', async t => {
+  const active = [
+    { ...recent, code: 'ACTIVE', isActive: false },
+    { ...recent, code: 'EDITABLE', isUpdatable: true },
+    { ...recent, code: 'LOCKED', isUpdatable: false },
+  ];
+  t.mock.method(globalThis, 'fetch', async path => new Response(JSON.stringify(path.endsWith('/orders')
+    ? { activeOrders: active, closedOrders: [{ ...old, isActive: true }] }
+    : { ...active[0], consignments: [{ timeSlotStartTimeString: 'fixture start', timeSlotEndTimeString: 'fixture end', address: 'PRIVATE' }], entries: [{ quantity: 1, product: { code: 'P_1' } }] }), { headers: { 'content-type': 'application/json' } }));
+  const all = await readOrders();
+  assert.equal(all.orders.find(o => o.orderNumber === 'OLD').active, false);
+  const result = await readOrders({ activeOnly: true });
+  assert.equal(result.total, 3);
+  assert.ok(result.orders.every(o => o.active));
+  assert.deepEqual(result.orders.map(o => o.editability), ['unknown', 'allowed', 'not_allowed']);
+  assert.ok(result.orders.every(o => o.editDeadline === null));
+  const details = await readOrders({ orderNumber: 'ACTIVE' });
+  assert.equal(details.active, true);
+  assert.equal(details.items[0].stockSignal, 'unknown');
+  assert.equal(details.deliveryWindows[0].start, 'fixture start');
+  assert.doesNotMatch(JSON.stringify(details), /PRIVATE/);
+});

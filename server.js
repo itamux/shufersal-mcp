@@ -3,15 +3,16 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
 import { Shufersal, AuthenticationError } from './shufersal.js';
+import { OrderCareError } from './order-care.js';
 
 const shopping = new Shufersal();
-const server = new McpServer({ name: 'itamux-shufersal', version: '0.5.0' });
+const server = new McpServer({ name: 'itamux-shufersal', version: '0.6.0' });
 function tool(name, description, inputSchema, call) {
   server.registerTool(name, { description: description + (!['open_shufersal', 'login_shufersal'].includes(name) ? ' The server refreshes a logged-out session once before starting this operation. Failed writes are never replayed automatically.' : ''), inputSchema }, async args => {
     try {
       return { content: [{ type: 'text', text: JSON.stringify(await call(args)) }] };
     } catch (error) {
-      if (error instanceof AuthenticationError) return { isError: true, content: [{ type: 'text', text: error.message }] };
+      if (error instanceof AuthenticationError || error instanceof OrderCareError) return { isError: true, content: [{ type: 'text', text: error.message }] };
       // Browser/network errors may contain credentials, request bodies or
       // session-bearing URLs. Never return those through MCP or console logs.
       return { isError: true, content: [{ type: 'text', text:
@@ -49,6 +50,17 @@ tool('update_shufersal_cart_item', 'Set the absolute quantity of one cart produc
 tool('remove_from_shufersal_cart', 'Remove one product from the draft cart and verify removal. Requires its current quantity from get_shufersal_cart.', { ...product, expected_quantity: quantity }, args => shopping.changeCart('remove', args));
 tool('get_shufersal_order_history', 'Read online order history, newest first. Returns order identifiers, dates and totals; does not reorder or cancel.', { limit: z.number().int().min(1).max(100).default(20), offset: z.number().int().min(0).max(10000).default(0) }, args => shopping.orderHistory(args));
 tool('get_shufersal_order', 'Read purchased products in one order returned by get_shufersal_order_history. Does not change orders or send invoices.', { order_number: z.string().regex(/^[A-Za-z0-9_-]{1,100}$/) }, args => shopping.orderDetails(args.order_number));
+const orderNumber = z.string().regex(/^[A-Za-z0-9_-]{1,100}$/);
+tool('get_shufersal_active_orders', 'Read active orders only, newest first, independently of the shopping cart. Returns explicit site editability (allowed, not_allowed, unknown) and available delivery-window fields. Active does not imply editable. Edit deadlines are unknown; native editing is not implemented.', { limit: z.number().int().min(1).max(100).default(20), offset: z.number().int().min(0).max(10000).default(0) }, args => shopping.orderHistory({ ...args, activeOnly: true }));
+tool('get_shufersal_order_shortages', 'Check explicit order shortages and, only if already linked to this order, editing-cart stock and calculation flags. Reports quantity differences separately from shortages. Coverage is always partial: no SMS data is read, and absence of issues is not an all-clear. Does not start an edit or restore a cart.', { order_number: orderNumber }, args => shopping.orderShortages(args.order_number));
+tool('preview_shufersal_order_edit', 'Preview absolute quantity changes against a fresh active order. expected_quantity must match the current order (zero for new products). quantity zero means removal. Does not start, save, discard, or apply edits. Revised prices and delivery eligibility remain unknown.', {
+  order_number: orderNumber,
+  changes: z.array(z.object({ ...product, quantity: z.number().min(0).max(1000), expected_quantity: z.number().min(0).max(1000) })).min(1).max(100),
+}, args => shopping.previewOrderEdit(args));
+tool('find_shufersal_order_replacements', 'Search the full catalog for alternatives to one active-order product using your query and optional catalog filters. Excludes the original and out-of-stock results. Unknown stock is excluded unless requested. Does not assume dietary/package equivalence or delivery eligibility and never applies replacements. Pagination refers to the unfiltered catalog page.', {
+  ...catalog, ...product, order_number: orderNumber,
+  query: z.string().trim().min(1).max(200).regex(/^[^:\x00-\x1f]+$/), include_unknown: z.boolean().default(false),
+}, args => shopping.orderReplacements(args));
 let closing = false;
 async function close() {
   if (closing) return;
