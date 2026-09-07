@@ -25,7 +25,8 @@
     "catalog.js",
     "coupons.js",
     "order-care.js",
-    "replacement-request.js"
+    "replacement-request.js",
+    "order-edit.js"
   ],
   "engines": {
     "node": ">=22.12"

@@ -80,7 +80,7 @@ export function previewOrderChanges(order, changes) {
     orderNumber: order.orderNumber, checkedAt: new Date().toISOString(), editability: order.editability,
     changes: diff, currentTotal: order.total, revisedTotal: null,
     applied: false, canApply: false,
-    reason: 'Preview only. Starting, saving, and discarding native order edits require verification against an eligible order. Prices, promotions, delivery availability, and deadlines must be checked again before saving.',
+    reason: 'Preview only. Use start_shufersal_order_edit to create a backed-up editing session. Saving remains unavailable until its native flow is verified. Prices, promotions, delivery availability, and deadlines must be checked again before saving.',
   };
 }
 

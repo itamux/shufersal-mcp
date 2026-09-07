@@ -12,7 +12,7 @@ export function parseCart(html) {
   }).map(node => {
     const quantity = Number(node.getAttribute('data-entry-qty') ?? node.querySelector('[name="qty"]')?.value);
     const entryNumber = Number(node.getAttribute('data-entry-number'));
-    const sellingMethod = node.querySelector('[name="sellingMethod"]')?.value || node.getAttribute('data-selling-method');
+    const sellingMethod = node.querySelector('[name="sellingMethod"]')?.value || node.getAttribute('data-selling-method') || node.querySelector('[data-miglog-sellingmethod]')?.getAttribute('data-miglog-sellingmethod');
     if (!Number.isFinite(quantity) || quantity <= 0 || !Number.isInteger(entryNumber) || entryNumber < 0 || !sellingMethod) throw Error('Cart item format changed');
     const lineTotal = node.querySelector('.miglog-prod-totalPrize')?.textContent?.trim() || null;
     return {
@@ -32,16 +32,16 @@ export function parseCart(html) {
     savings: doc.querySelector('.discountCartBottom')?.textContent?.trim() || null };
 }
 
-export function cartWrite(operation, args, cart) {
+export function cartWrite(operation, args, cart, methods = ['BY_UNIT', 'BY_WEIGHT']) {
   const { product_code: code, selling_method: method, quantity, expected_quantity: expected } = args;
-  if (!/^[A-Za-z0-9_-]{1,80}$/.test(code) || !['BY_UNIT', 'BY_WEIGHT'].includes(method)) throw Error('Invalid product or selling method');
+  if (!/^[A-Za-z0-9_-]{1,80}$/.test(code) || !methods.includes(method)) throw Error('Invalid product or selling method');
   const rows = cart.items.filter(item => item.productCode === code && item.sellingMethod === method);
   if (rows.length > 1) throw Error('Ambiguous cart product');
   const row = rows[0];
   const before = row?.quantity || 0;
   if (operation !== 'add' && (!row || expected !== before)) throw Error('Cart changed; read the cart again');
   const after = operation === 'remove' ? 0 : operation === 'add' ? before + quantity : quantity;
-  if (!Number.isFinite(after) || after < 0 || after > 1000 || (method === 'BY_UNIT' && !Number.isInteger(after))) throw Error('Invalid quantity');
+  if (!Number.isFinite(after) || after < 0 || after > 1000 || (method !== 'BY_WEIGHT' && !Number.isInteger(after))) throw Error('Invalid quantity');
   if (operation === 'add') {
     if (!Number.isFinite(quantity) || quantity <= 0) throw Error('Invalid quantity');
     return { path: '/online/he/cart/add', contentType: 'application/json', before, after,

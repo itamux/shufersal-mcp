@@ -1,4 +1,5 @@
 import puppeteer from 'puppeteer';
+import { backupOrderEdit, compareOrderCart, digest, editingOrder } from './order-edit.js';
 import { prepareCoupon, activateCouponAndVerify } from './coupons.js';
 import { catalogQuery, readCatalog, readCategories, readCoupons, readSales, readPromotionProducts } from './catalog.js';
 import { parseCart, cartWrite, verifyCart, readOrders } from './shopping.js';
@@ -20,9 +21,12 @@ export function loginCredentials(env) {
   return { email, password };
 }
 
-export function allowedRequest(url, method, loginPending, body = '', cartPending = null, couponPending = null) {
+export function allowedRequest(url, method, loginPending, body = '', cartPending = null, couponPending = null, orderPending = null) {
   const target = new URL(url);
   if (target.origin !== ORIGIN || target.username || target.password) return false;
+  if (orderPending && url === orderPending.url && method === orderPending.method && (body || '') === orderPending.body
+    && ((method === 'GET' && /^\/online\/he\/cart\/cartFromOrder\/[A-Za-z0-9_-]{1,100}$/.test(target.pathname) && !target.search)
+      || (method === 'POST' && target.pathname === '/online/he/cart/remove' && !target.search && !body))) return true;
   if (method === 'GET' || method === 'HEAD') {
     return !/logout|checkout/i.test(target.pathname)
       && (!target.pathname.includes('/cart/') || (target.pathname === '/online/he/cart/load' && (!target.search || (method === 'GET' && target.search === '?restoreCart=true'))));
@@ -62,6 +66,7 @@ export class Shufersal {
 
   async page() {
     if (!this.browser?.connected) {
+      if (this.orderEdit) throw new OrderCareError('Order editing browser lost. Backup retained; no login, restore, or write attempted. Do not restart the edit automatically.');
       // Ephemeral browser profile: no saved passwords or durable session files.
       this.browser = await this.launch({ headless: true });
       this.tab = await this.browser.newPage();
@@ -73,10 +78,11 @@ export class Shufersal {
         const headers = { ...request.headers() };
         delete headers.authorization;
         if ((url === `${HOME}cart/load?restoreCart=true` && !this.restoringCart)
-          || !allowedRequest(url, method, this.loginPending, request.postData(), this.cartPending, this.couponPending)) {
+          || !allowedRequest(url, method, this.loginPending, request.postData(), this.cartPending, this.couponPending, this.orderPending)) {
           void request.abort().catch(() => {});
           return;
         }
+        if (this.orderPending && url === this.orderPending.url && method === this.orderPending.method) this.orderPending = null;
         if (method === 'POST') {
           if (url === LOGIN_POST) this.loginPending = false;
           else if (url === COUPON_POST) this.couponPending = null;
@@ -104,14 +110,14 @@ export class Shufersal {
 
   open() {
     return this.run(async () => {
-      const page = await this.navigate(HOME);
+      const page = this.orderEdit ? await this.editPage(this.orderEdit.id) : await this.navigate(HOME);
       return { opened: true, authenticated: await this.authenticated(page) };
     });
   }
 
   login() {
     return this.run(async () => {
-      const page = await this.navigate(HOME);
+      const page = this.orderEdit ? await this.editPage(this.orderEdit.id) : await this.navigate(HOME);
       if (await this.authenticated(page)) return { authenticated: true, reused: true };
       await this.refreshSession();
       return { authenticated: true, reused: false };
@@ -120,6 +126,7 @@ export class Shufersal {
 
   // Called inside run(): never enqueue nested work or replay an operation.
   async refreshSession() {
+    if (this.orderEdit) throw new OrderCareError('Order edit session expired. Backup retained; automatic login is disabled during editing.');
     try {
       const credentials = loginCredentials(this.env);
       let page = await this.navigate(LOGIN);
@@ -194,6 +201,7 @@ export class Shufersal {
   }
 
   async accountPage({ restoreCart = true } = {}) {
+    if (this.orderEdit) return this.editPage(this.orderEdit.id);
     let page = await this.navigate(HOME);
     if (!await this.authenticated(page)) page = await this.refreshSession();
     if (await page.evaluate(() => !!window.miglog?.showMergeCarts)) throw Error('Cart merge decision required; no shopping operation started');
@@ -205,6 +213,7 @@ export class Shufersal {
   }
 
   async readCart(page, restore = false) {
+    if (restore && this.orderEdit) throw new OrderCareError('Cart restore is disabled during an order edit.');
     this.restoringCart = restore;
     try {
       const html = await page.evaluate(async restore => {
@@ -222,6 +231,7 @@ export class Shufersal {
 
   changeCart(operation, args) {
     return this.run(async () => {
+      if (this.orderEdit) throw new OrderCareError('Use the order edit tool for an open order, not draft-cart tools.');
       const page = await this.accountPage();
       if (await page.evaluate(() => !!window.miglog?.cart?.order)) throw Error('Existing order is being edited; cart changes blocked');
       const before = await this.readCart(page);
@@ -241,6 +251,175 @@ export class Shufersal {
       } finally { this.cartPending = null; }
       const cart = verifyCart(await this.readCart(page), args.product_code, args.selling_method, write.after);
       return { verified: true, previousQuantity: write.before, quantity: write.after, cart };
+    });
+  }
+
+  async editPage(editId) {
+    const edit = this.orderEdit;
+    if (!edit || edit.id !== editId) throw new OrderCareError('No matching edit in this MCP process. Do not start another edit to recover a lost session.');
+    if (!this.browser?.connected || this.browser !== edit.browser) throw new OrderCareError('Editing browser lost. Backup retained; no automatic recovery or writes.');
+    const page = await this.navigate(HOME);
+    if (!await this.authenticated(page) || await page.evaluate(editingOrder) !== edit.order.orderNumber
+      || await page.evaluate(() => !!window.miglog?.showMergeCarts)) {
+      throw new OrderCareError('Editing session no longer matches this order. Backup retained; no login, restore, or write attempted.');
+    }
+    return page;
+  }
+
+  async orderRequest(page, request) {
+    this.orderPending = request;
+    try {
+      return await page.evaluate(async ({ url, method, body }) => {
+        const csrf = window.ACC?.config?.CSRFToken;
+        if (method === 'POST' && (typeof csrf !== 'string' || !csrf)) throw Error('CSRF unavailable');
+        const response = await fetch(url, { method, ...(method === 'POST' ? { body } : {}),
+          credentials: 'same-origin', redirect: 'error', signal: AbortSignal.timeout(20000),
+          headers: { accept: 'application/json', 'x-requested-with': 'XMLHttpRequest',
+            ...(method === 'POST' ? { 'content-type': 'application/x-www-form-urlencoded; charset=UTF-8', CSRFToken: csrf } : {}) } });
+        if (!response.ok) throw Error('Order edit response unavailable');
+        await response.text();
+      }, request);
+    } finally { this.orderPending = null; }
+  }
+
+  startOrderEdit({ order_number: orderNumber, acknowledge_repricing_and_sms_reset: acknowledged, replacement_url: replacementUrl }) {
+    return this.run(async () => {
+      if (acknowledged !== true) throw new OrderCareError('Obtain approval: starting a basket edit may recalculate promotions and invalidate SMS replacement choices.');
+      if (typeof orderNumber !== 'string' || !/^[A-Za-z0-9_-]{1,100}$/.test(orderNumber)) throw new OrderCareError('Invalid order number.');
+      if (this.orderEdit) throw new OrderCareError('An edit or uncertain edit already exists. Inspect it; never start again automatically.');
+      const page = await this.accountPage();
+      if (await page.evaluate(() => !!window.miglog?.cart?.order)) throw new OrderCareError('An existing edit is not owned by this MCP process. No new edit started.');
+      const order = await page.evaluate(readOrders, { orderNumber });
+      if (!order.active || order.editability !== 'allowed') throw new OrderCareError('Order must be active and explicitly editable. No edit started.');
+      const cart = await this.readCart(page);
+      if (cart.items.length || cart.itemCount !== 0) throw new OrderCareError('Shopping cart must be empty before opening an order edit. It was not cleared.');
+      const replacement = await this.replacementContext(orderNumber, replacementUrl);
+      if (replacementUrl && !replacement.fresh) throw new OrderCareError('Current SMS choices could not be read. No edit started.');
+      const backup = await backupOrderEdit(this.env, { order, cart, replacement });
+      // Recheck after disk/SMS work; do not overwrite a concurrently changed cart.
+      const checked = await this.accountPage({ restoreCart: false });
+      if (await checked.evaluate(() => !!window.miglog?.cart?.order)
+        || digest(await this.readCart(checked)) !== digest(cart)
+        || digest(await checked.evaluate(readOrders, { orderNumber })) !== digest(order)) {
+        throw new OrderCareError('Order or cart changed while backing up. No edit started.');
+      }
+      this.orderEdit = { id: backup.id, backup, order, browser: this.browser, phase: 'start_uncertain' };
+      try {
+        await this.orderRequest(checked, { url: HOME + 'cart/cartFromOrder/' + orderNumber, method: 'GET', body: '' });
+        const editing = await this.editPage(backup.id);
+        const current = await this.readCart(editing);
+        if (!current.items.length) throw Error('Empty editing cart');
+        await this.editPage(backup.id);
+        this.orderEdit.phase = 'editing';
+        return this.editResult(current);
+      } catch {
+        return { editId: backup.id, orderNumber, state: 'start_uncertain', backup, submitted: false,
+          instruction: 'Start was attempted once. Inspect this edit before any action; do not replay start. Backup retained.' };
+      }
+    });
+  }
+
+  editResult(cart) {
+    const edit = this.orderEdit;
+    return { editId: edit.id, orderNumber: edit.order.orderNumber, state: edit.phase,
+      backup: edit.backup, cart, cartRevision: digest(cart), comparison: compareOrderCart(edit.order, cart),
+      submitted: false, canSave: false, canChange: edit.phase === 'editing',
+      note: 'Changes exist only in the editing basket. Saving is unavailable until the native submit flow is verified. SMS choices may require rechecking; never reapply automatically.' };
+  }
+
+  getOrderEdit(editId) {
+    return this.run(async () => {
+      if (!this.orderEdit || this.orderEdit.id !== editId) throw new OrderCareError('No matching edit in this MCP process.');
+      try {
+        // Reconcile an uncertain start/discard without replaying a mutation.
+        const edit = this.orderEdit;
+        if (['start_uncertain', 'discard_uncertain'].includes(edit.phase) && this.browser?.connected && this.browser === edit.browser) {
+          const checked = await this.navigate(HOME);
+          if (await this.authenticated(checked) && !await checked.evaluate(() => !!window.miglog?.cart?.order || !!window.miglog?.showMergeCarts)) {
+            const cart = await this.readCart(checked);
+            const order = await checked.evaluate(readOrders, { orderNumber: edit.order.orderNumber });
+            if (!cart.items.length && cart.itemCount === 0 && digest(order) === digest(edit.order)) {
+              // A timed-out mutation could still finish later. Do not release
+              // ownership or permit a new start based on an empty read alone.
+              return { editId, orderNumber: order.orderNumber, state: 'no_edit_observed',
+                orderUnchanged: true, backup: edit.backup, submitted: false,
+                instruction: 'No open edit was observed, but the previous request remains uncertain. Recovery lock retained. Inspect the website before restarting this MCP process; do not replay the mutation automatically.' };
+            }
+          }
+        }
+        const page = await this.editPage(editId), cart = await this.readCart(page);
+        await this.editPage(editId);
+        if (this.orderEdit.phase !== 'discard_uncertain') this.orderEdit.phase = 'editing';
+        return this.editResult(cart);
+      } catch {
+        return { editId, orderNumber: this.orderEdit.order.orderNumber, state: 'context_unavailable', backup: this.orderEdit.backup,
+          submitted: false, instruction: 'No automatic login, restore, or retry. Inspect the order on the website; keep the backup.' };
+      }
+    });
+  }
+
+  changeOrderEdit({ edit_id: editId, cart_revision: revision, ...args }) {
+    return this.run(async () => {
+      if (this.orderEdit?.phase !== 'editing') throw new OrderCareError('Read the uncertain edit before making another change.');
+      const page = await this.editPage(editId), before = await this.readCart(page);
+      if (digest(before) !== revision) throw new OrderCareError('Editing cart changed. Read the edit again before changing it.');
+      const order = await page.evaluate(readOrders, { orderNumber: this.orderEdit.order.orderNumber });
+      if (!order.active || order.editability !== 'allowed' || digest(order) !== digest(this.orderEdit.order)) throw new OrderCareError('Order changed or is no longer editable. No item change attempted.');
+      const rows = before.items.filter(i => i.productCode === args.product_code);
+      if (rows.length > 1 || (rows.length && rows[0].sellingMethod !== args.selling_method)
+        || (rows[0]?.quantity || 0) !== args.expected_quantity) throw new OrderCareError('Use the exact product, selling method and current quantity from the editing cart.');
+      if (!Number.isFinite(args.quantity) || args.quantity < 0 || args.quantity > 1000) throw new OrderCareError('Invalid quantity.');
+      if (args.quantity === args.expected_quantity) return this.editResult(before);
+      const operation = args.quantity === 0 ? 'remove' : rows.length ? 'update' : 'add';
+      const write = cartWrite(operation, args, before, ['BY_UNIT', 'BY_WEIGHT', 'BY_PACKAGE']);
+      await this.editPage(editId);
+      if (digest(await this.readCart(page)) !== revision) throw new OrderCareError('Editing cart changed before the write. Read it again.');
+      const csrf = await page.evaluate(() => window.ACC?.config?.CSRFToken);
+      if (typeof csrf !== 'string' || !csrf) throw new OrderCareError('Editing CSRF unavailable. No change attempted.');
+      this.orderEdit.phase = 'change_uncertain';
+      this.cartPending = { url: ORIGIN + write.path, body: write.body };
+      try {
+        await page.evaluate(async ({ path, body, contentType, csrf }) => {
+          const response = await fetch(path, { method: 'POST', body, credentials: 'same-origin', redirect: 'error',
+            signal: AbortSignal.timeout(20000), headers: { 'content-type': contentType, CSRFToken: csrf, 'x-requested-with': 'XMLHttpRequest' } });
+          if (!response.ok) throw Error('Order item write unavailable');
+          await response.text();
+        }, { ...write, csrf });
+        await this.editPage(editId);
+        const cart = verifyCart(await this.readCart(page), args.product_code, args.selling_method, write.after);
+        const expected = before.items.filter(i => i.productCode !== args.product_code).map(i => [i.productCode, i.sellingMethod, i.quantity]).sort();
+        const actual = cart.items.filter(i => i.productCode !== args.product_code).map(i => [i.productCode, i.sellingMethod, i.quantity]).sort();
+        if (digest(expected) !== digest(actual)) throw Error('Other cart rows changed');
+        await this.editPage(editId);
+        this.orderEdit.phase = 'editing';
+        return { ...this.editResult(cart), verified: true };
+      } catch {
+        throw new OrderCareError('Editing item change is unconfirmed and may have happened. Read the edit before deciding; never replay the write automatically. Backup retained.');
+      } finally { this.cartPending = null; }
+    });
+  }
+
+  discardOrderEdit({ edit_id: editId, cart_revision: revision, confirm_discard: confirmed }) {
+    return this.run(async () => {
+      if (confirmed !== true) throw new OrderCareError('Confirm discarding unsaved basket changes. This does not cancel the placed order.');
+      if (this.orderEdit?.phase !== 'editing') throw new OrderCareError('Read the uncertain edit before discarding.');
+      const page = await this.editPage(editId), cart = await this.readCart(page), edit = this.orderEdit;
+      if (digest(cart) !== revision) throw new OrderCareError('Editing cart changed. Read it again before discarding.');
+      await this.editPage(editId);
+      if (digest(await this.readCart(page)) !== revision) throw new OrderCareError('Editing cart changed before discard. Read it again.');
+      edit.phase = 'discard_uncertain';
+      try {
+        await this.orderRequest(page, { url: HOME + 'cart/remove', method: 'POST', body: '' });
+        const refreshed = await this.navigate(HOME);
+        if (!await this.authenticated(refreshed) || await refreshed.evaluate(() => !!window.miglog?.cart?.order || !!window.miglog?.showMergeCarts)) throw Error('Exit context unconfirmed');
+        const draft = await this.readCart(refreshed);
+        const order = await refreshed.evaluate(readOrders, { orderNumber: edit.order.orderNumber });
+        if (draft.items.length || draft.itemCount !== 0 || digest(order) !== digest(edit.order)) throw Error('Order or draft differs after discard');
+        this.orderEdit = null;
+        return { editId, state: 'discarded', orderUnchanged: true, backup: edit.backup, submitted: false };
+      } catch {
+        throw new OrderCareError('Discard could not be verified and may have happened. Backup retained. Inspect the website; never replay discard automatically.');
+      }
     });
   }
 

@@ -175,17 +175,81 @@ order's delivery are not inferred. No replacement is applied.
 
 Edit previews return `applied: false`, `canApply: false`, a quantity diff, and
 `revisedTotal: null`. Closed orders, an explicit denial of editability, ambiguous
-changes, and stale expected quantities are rejected. The native start/save/
-discard edit lifecycle and SMS replacement submission are deliberately not
-exposed until their complete behavior can be verified with an eligible order.
-Discarding an edit must never be implemented as cancelling an order.
+changes, and stale expected quantities are rejected. The preview never applies changes.
+Use the session-bound tools below for an editing basket. Order submission and SMS
+replacement submission remain unavailable until their native flows are verified.
 
-The new order-care operations do not restore the shopping cart. The browser
+The read-only order-care operations do not restore the shopping cart. The browser
 blocks automatic restore requests except for the server's explicit draft-cart
 initialization, which is also skipped when an order is being edited. Existing
 draft-cart writes still reject order-edit sessions. Tests use intercepted
 synthetic HTML/JSON, including a context change, partial coverage, and a shortage
 absent from the order response. No live order or replacement submission is used in tests.
+
+
+## Session-bound order editing
+
+| Tool | Behavior |
+| --- | --- |
+| `start_shufersal_order_edit` | Back up and open an active, explicitly editable order. Requires `order_number` and `acknowledge_repricing_and_sms_reset: true` after user approval. Optional `replacement_url` captures fresh SMS choices; failure stops the start. |
+| `get_shufersal_order_edit` | Read `edit_id`, current cart, `cartRevision`, stock/calculation flags, original-order comparison, and backup location. Reconcile uncertain outcomes without replaying writes. |
+| `set_shufersal_order_edit_item` | Set an absolute quantity using `edit_id`, latest `cart_revision`, `product_code`, current `selling_method`, `expected_quantity`, and `quantity`. Zero removes; expected zero adds. |
+| `discard_shufersal_order_edit` | Discard unsaved changes with `edit_id`, latest `cart_revision`, and `confirm_discard: true`. Verify that the placed order remains unchanged. |
+
+**There is no save/submit tool yet.** These tools prepare or discard an editing
+basket and always return `submitted: false`. They cannot complete an order
+update. Do not tell the customer an order was updated based on an editing-cart
+quantity. Do not start an edit unless this limitation fits the user's request.
+
+Before starting, the server initializes the ordinary cart and refuses a nonempty
+cart or an existing edit; it never clears or merges those to make room. It saves
+the original order, empty draft cart, and sanitized SMS snapshot (or explicit
+missing coverage) before the state-changing start request. A second read rejects
+changes made during backup. SMS tokens, credentials, addresses, and payment data
+are excluded. SMS choices may be invalidated by website editing; that interaction
+has not been verified live. Never silently reapply choices.
+
+Set `SHUFERSAL_BACKUP_DIR` to a durable, private directory, especially in a
+container. The default is `~/.local/state/shufersal-mcp/backups`. Directory mode
+must be `0700`; each UUID-named JSON file is created exclusively with mode `0600`,
+flushed and read back with a SHA-256 checksum. Responses return its path and hash.
+Backups remain after discard or process exit; owners manage their retention.
+Files preserve product codes, quantities, methods and displayed prices for
+manual recovery, not automatic resubmission or restoration.
+
+One edit belongs to one server process and its original browser session. Calls
+are serialized. Authentication loss, a disconnected browser, another order
+association, or a merge prompt stops editing without login or cart restore.
+Restarting the MCP loses edit ownership, but retains backup files on durable
+storage. A separate login cannot be assumed to see the same editing basket.
+Inspect the website and backup after session loss; never start another edit as
+an automatic recovery action. The server does not silently discard on shutdown.
+
+Every item change checks the latest cart revision, original order, current site
+editability, and session association. It verifies the requested quantity and
+unchanged other rows after writing. Read an uncertain edit before another write;
+failed requests are never automatically replayed. If an uncertain start/discard
+is followed by an empty cart read, `no_edit_observed` retains the recovery lock:
+a delayed request could still complete. An uncertain discard also stays locked
+when the old editing basket remains visible (`canChange: false`). Inspect the website before deliberately
+restarting the MCP; an empty read alone never unlocks a new edit. All operations fail closed if
+these checks cannot be completed. Other clients can still change the account
+between checks: the service exposes no transaction/version token for an atomic
+conditional write, so avoid concurrent editing from another client.
+
+Use selling methods from the editing cart; packaged produce can expose different
+methods in order details and the edit UI. `BY_PACKAGE` accepts whole quantities
+in the edit tool. Comparison output preserves differences without calling them
+shortages: order rows may include delivery/service charges absent from the cart.
+Revised prices, promotions and delivery availability need a final check before
+any future save implementation.
+
+Native start (`GET /cart/cartFromOrder/<id>`) and discard (`POST /cart/remove`)
+were observed in the website's open/exit flow. Their network permissions are
+armed for exactly one matching request. Order cancellation (`DELETE` on the
+order), checkout and SMS submissions remain blocked. The native open/discard
+flow was tested on an eligible order without changing its items; automated tool
+coverage uses intercepted browser fixtures, not a live order submission.
 
 
 ## Independent website and SMS replacement views
