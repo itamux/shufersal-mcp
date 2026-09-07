@@ -14,6 +14,7 @@ export function parseCart(html) {
     const entryNumber = Number(node.getAttribute('data-entry-number'));
     const sellingMethod = node.querySelector('[name="sellingMethod"]')?.value || node.getAttribute('data-selling-method');
     if (!Number.isFinite(quantity) || quantity <= 0 || !Number.isInteger(entryNumber) || entryNumber < 0 || !sellingMethod) throw Error('Cart item format changed');
+    const lineTotal = node.querySelector('.miglog-prod-totalPrize')?.textContent?.trim() || null;
     return {
       productCode: node.getAttribute('data-product-code'),
       imageUrl: imageUrl([...node.querySelectorAll('.imgContainer img')].flatMap(i => [i.getAttribute('data-src'), i.getAttribute('src')])),
@@ -21,12 +22,14 @@ export function parseCart(html) {
       outOfStock: node.classList.contains('miglog-cart-prod-notInStock'),
       calculationError: node.classList.contains('errorCalc'),
       name: node.getAttribute('data-product-name') || node.querySelector('.miglog-prod-name')?.textContent?.trim() || '',
-      price: node.getAttribute('data-product-price') || node.querySelector('.miglog-prod-price')?.textContent?.trim() || null,
+      price: lineTotal, lineTotal,
     };
   });
   const count = doc.querySelector('#cartTotalItems')?.textContent?.trim();
   if (!items.length && count !== '0') throw Error('Cart format changed or session unavailable');
-  return { items, itemCount: count !== undefined && /^\d+$/.test(count) ? Number(count) : null, total: doc.querySelector('.discountCartBottom')?.textContent?.trim() || null };
+  return { items, itemCount: count !== undefined && /^\d+$/.test(count) ? Number(count) : null,
+    total: doc.querySelector('.miglog-cart-summary-totalprice')?.textContent?.trim() || null,
+    savings: doc.querySelector('.discountCartBottom')?.textContent?.trim() || null };
 }
 
 export function cartWrite(operation, args, cart) {

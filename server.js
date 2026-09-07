@@ -5,7 +5,7 @@ import { z } from 'zod';
 import { Shufersal } from './shufersal.js';
 
 const shopping = new Shufersal();
-const server = new McpServer({ name: 'itamux-shufersal', version: '0.4.3' });
+const server = new McpServer({ name: 'itamux-shufersal', version: '0.4.4' });
 function tool(name, description, inputSchema, call) {
   server.registerTool(name, { description, inputSchema }, async args => {
     try {
@@ -42,7 +42,7 @@ const product = {
   selling_method: z.enum(['BY_UNIT', 'BY_WEIGHT']).describe('Selling method code from search or cart'),
 };
 const quantity = z.number().positive().max(1000).describe('Units for BY_UNIT, weight quantity for BY_WEIGHT');
-tool('get_shufersal_cart', 'Read the current authenticated cart, quantities, itemCount, outOfStock and calculationError flags, and displayed total. Unavailable or error rows are not confirmed purchasable items.', {}, () => shopping.cart());
+tool('get_shufersal_cart', 'Read the current authenticated cart, quantities, itemCount, outOfStock and calculationError flags, and displayed total including delivery/service. Item lineTotal (also returned as price) is the entire row amount, not a unit price; savings is separate from total. These are displayed amounts, not a completed charge. Unavailable or error rows are not confirmed purchasable items.', {}, () => shopping.cart());
 tool('add_to_shufersal_cart', 'Add a product to the draft cart and verify its new quantity and absence of stock/calculation errors. Changes the cart, never checks out. Do not retry automatically.', { ...product, quantity }, args => shopping.changeCart('add', args));
 tool('update_shufersal_cart_item', 'Set the absolute quantity of one cart product. Requires its current quantity from get_shufersal_cart; rejects stale values. Never edits an existing order.', { ...product, quantity, expected_quantity: quantity }, args => shopping.changeCart('update', args));
 tool('remove_from_shufersal_cart', 'Remove one product from the draft cart and verify removal. Requires its current quantity from get_shufersal_cart.', { ...product, expected_quantity: quantity }, args => shopping.changeCart('remove', args));
